@@ -1,6 +1,6 @@
 {
   "name": "busybar-deck",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "A control deck for the BUSY Bar: what is on screen, which app owns it, and every app's settings — in a browser",
   "author": "viirtualp1",
   "license": "MIT",
@@ -52,7 +52,7 @@
   },
   "dependencies": {
     "busybar-config": "^1.2.0",
-    "busybar-kit": "^2.2.0"
+    "busybar-kit": "^2.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

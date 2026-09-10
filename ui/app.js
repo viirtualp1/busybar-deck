@@ -9,12 +9,12 @@ const el = (id) => document.getElementById(id);
 const ui = {
   front: el('front'),
   back: el('back'),
-  nowApp: el('now-app'),
   unpin: el('unpin'),
   appList: el('app-list'),
   empty: el('empty'),
   appView: el('app-view'),
-  appName: el('app-name'),
+  appName: el('app-name-text'),
+  appDot: el('app-dot'),
   appSummary: el('app-summary'),
   sections: el('sections'),
   pin: el('pin'),
@@ -127,8 +127,6 @@ function renderStatus() {
   if (!status) {
     return;
   }
-  const on = status.wm.connected;
-  ui.nowApp.textContent = status.onScreen ?? (on ? 'nobody' : 'unknown');
   ui.unpin.hidden = !status.pinned;
 }
 
@@ -146,7 +144,7 @@ function renderApps() {
     button.append(
       span('state', ''),
       span('name', app.name),
-      app.pinned ? span('badge', 'held') : span('rank', String(app.rank)),
+      app.pinned ? span('badge', 'held') : rank(app.rank),
     );
     button.addEventListener('click', () => select(app.name));
     li.append(button);
@@ -154,6 +152,20 @@ function renderApps() {
   }
 
   ui.appList.replaceChildren(fragment);
+}
+
+/**
+ * The rank, marked as one.
+ *
+ * A bare number in a list of apps reads as anything — a port, a count, an
+ * order. The caret is there to say which way is up: higher takes the screen.
+ */
+function rank(value) {
+  const node = span('rank', String(value));
+  node.title = `Priority ${value} — higher takes the screen`;
+  node.prepend(Object.assign(document.createElement('i'), { className: 'rank-mark' }));
+
+  return node;
 }
 
 function span(className, text) {
@@ -205,9 +217,13 @@ function renderActions() {
     return;
   }
   const wm = state.status?.wm.connected ?? false;
-  ui.pin.hidden = !app.running;
+  // Offering the screen to something already on it is an offer of nothing, and
+  // to something that is not running there is no frame to offer. What is left
+  // is the one case the button is for.
+  ui.pin.hidden = app.onScreen || !app.running;
   ui.pin.disabled = !wm;
   ui.restart.disabled = !wm || !app.supervised;
+  ui.appDot.hidden = !app.onScreen;
 }
 
 function renderSections() {
@@ -274,7 +290,11 @@ function envSection(section) {
 function listSection(section) {
   const block = sectionShell(section);
   const raw = state.saved.sections[section.file];
-  const entries = Array.isArray(raw) ? raw : (raw?.entries ?? []);
+  // What is on screen, not what is on disk. The section is rebuilt in place
+  // after every add and remove, and reading the saved copy here meant a new
+  // entry was recorded, enabled the save bar, and then vanished — the button
+  // looked broken while working perfectly.
+  const entries = listEdits(section);
   const header = Array.isArray(raw) ? {} : (raw?.header ?? {});
 
   if (section.header?.length) {
@@ -295,7 +315,7 @@ function listSection(section) {
   block.append(list);
 
   const add = document.createElement('button');
-  add.className = 'more';
+  add.className = 'add';
   add.textContent = '+ Add';
   add.addEventListener('click', () => {
     const next = [...listEdits(section), {}];

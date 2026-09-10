@@ -51,9 +51,7 @@ body {
   margin: 0;
   font-family: var(--sans);
   color: var(--ink);
-  background:
-    radial-gradient(1100px 520px at 12% -12%, #10241a 0%, transparent 60%),
-    radial-gradient(900px 480px at 100% -6%, #131a26 0%, transparent 55%), var(--bg);
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -784,4 +782,63 @@ button.ghost.small {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* --- the app on screen, and the priority beside each one ------------------ */
+
+/**
+ * The same dot the rail uses, so "this one is on the Bar right now" reads the
+ * same in both places.
+ */
+.on-air {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+  background: var(--led);
+  box-shadow: 0 0 10px var(--led);
+}
+
+/**
+ * A caret above the number, because a bare one in a list of apps reads as
+ * anything — a port, a count, a position. This one means: higher wins.
+ */
+.rank-mark {
+  width: 0;
+  height: 0;
+  margin-right: 0.3rem;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-bottom: 4px solid var(--muted);
+  opacity: 0.75;
+}
+
+.app-item .rank {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The one button on the page that adds something, so it looks like it. */
+.add {
+  align-self: start;
+  margin: 0.2rem 1.1rem 1.1rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--led);
+  color: #06130c;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.add:hover {
+  background: color-mix(in srgb, var(--led) 85%, white);
+}
+
+.add:active {
+  transform: translateY(1px);
 }

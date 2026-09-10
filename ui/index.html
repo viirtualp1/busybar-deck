@@ -35,9 +35,7 @@
             </figure>
           </div>
           <div class="now">
-            <span class="muted small">Showing</span>
-            <strong id="now-app">nobody</strong>
-            <button id="unpin" class="ghost small" hidden>Release</button>
+            <button id="unpin" class="ghost small" hidden>Release the screen</button>
           </div>
         </section>
 
@@ -58,7 +56,10 @@
         <article id="app-view" hidden>
           <header class="app-head">
             <div>
-              <h1 id="app-name">—</h1>
+              <h1 id="app-name">
+                <i id="app-dot" class="on-air" title="On screen now" hidden></i>
+                <span id="app-name-text">—</span>
+              </h1>
               <p id="app-summary" class="muted"></p>
             </div>
             <div class="app-actions">
