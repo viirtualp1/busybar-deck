@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark" />
+    <title>Deck — BUSY Bar</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#editor">Skip to settings</a>
+
+    <header class="bar">
+      <div class="mark" aria-hidden="true"></div>
+      <div class="bar-title">
+        <strong>Deck</strong>
+        <span id="profile" class="muted mono">—</span>
+      </div>
+      <div class="bar-right">
+        <span id="wm-state" class="chip" title="Window manager">
+          <i class="dot"></i><span>checking…</span>
+        </span>
+        <button id="open-palette" class="key" title="Search (Ctrl+K)">
+          <kbd>Ctrl</kbd><kbd>K</kbd>
+        </button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <aside class="rail">
+        <section class="screen" aria-label="What the Bar is showing">
+          <div class="screen-stack">
+            <figure class="panel front">
+              <img id="front" alt="Front display" />
+              <figcaption>front · 72×16</figcaption>
+            </figure>
+            <figure class="panel back">
+              <img id="back" alt="Back display" />
+              <figcaption>back · 160×80</figcaption>
+            </figure>
+          </div>
+          <p id="screen-note" class="muted small">Looking for the Bar…</p>
+          <div class="now">
+            <span class="muted small">Showing</span>
+            <strong id="now-app">nobody</strong>
+            <button id="unpin" class="ghost small" hidden>Release</button>
+          </div>
+        </section>
+
+        <nav class="apps" aria-label="Apps">
+          <h2 class="rail-head">Apps</h2>
+          <ul id="app-list" class="app-list"></ul>
+        </nav>
+      </aside>
+
+      <section id="editor" class="editor" aria-live="polite">
+        <div id="empty" class="empty">
+          <h1>Pick an app</h1>
+          <p class="muted">
+            Everything an app can be configured by comes from the app itself, so this list
+            grows when you install one.
+          </p>
+        </div>
+        <article id="app-view" hidden>
+          <header class="app-head">
+            <div>
+              <h1 id="app-name">—</h1>
+              <p id="app-summary" class="muted"></p>
+            </div>
+            <div class="app-actions">
+              <button id="pin" class="ghost">Put on screen</button>
+              <button id="restart" class="ghost">Restart</button>
+            </div>
+          </header>
+          <div id="sections"></div>
+        </article>
+      </section>
+    </main>
+
+    <div id="savebar" class="savebar" hidden role="status">
+      <span id="savebar-text">No changes</span>
+      <div class="savebar-actions">
+        <button id="discard" class="ghost">Discard</button>
+        <button id="save" class="primary">Save</button>
+      </div>
+    </div>
+
+    <div id="palette" class="palette" hidden>
+      <div class="palette-box" role="dialog" aria-modal="true" aria-label="Search">
+        <input
+          id="palette-input"
+          type="text"
+          placeholder="Jump to an app or a setting…"
+          autocomplete="off"
+        />
+        <ul id="palette-list"></ul>
+      </div>
+    </div>
+
+    <output id="toast" class="toast" hidden></output>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
