@@ -7,11 +7,8 @@ const API = '/deck/api';
 
 const el = (id) => document.getElementById(id);
 const ui = {
-  profile: el('profile'),
-  wmState: el('wm-state'),
   front: el('front'),
   back: el('back'),
-  screenNote: el('screen-note'),
   nowApp: el('now-app'),
   unpin: el('unpin'),
   appList: el('app-list'),
@@ -94,14 +91,14 @@ const screens = {
         return;
       }
       this.delay = failed ? Math.min(this.delay * 2, 30_000) : 1500;
-      ui.screenNote.textContent = failed
-        ? 'No frame from the Bar — is it switched on and reachable?'
-        : '';
       this.timer = setTimeout(() => this.tick(), this.delay);
     };
 
-    load(ui.front, `/screen?display=0&t=${stamp}`, done);
-    load(ui.back, `/screen?display=1&t=${stamp}`, done);
+    // Through the deck, not straight at the Bar: an `<img>` cannot carry the
+    // credentials the device wants, and the daemon in front of us already has
+    // them. The timestamp is what stops the browser reusing a frozen frame.
+    load(ui.front, `${API}/screen?display=0&t=${stamp}`, done);
+    load(ui.back, `${API}/screen?display=1&t=${stamp}`, done);
   },
 };
 
@@ -130,13 +127,7 @@ function renderStatus() {
   if (!status) {
     return;
   }
-  ui.profile.textContent = status.profile;
-
   const on = status.wm.connected;
-  ui.wmState.className = `chip ${on ? 'on' : 'off'}`;
-  ui.wmState.lastElementChild.textContent = on ? 'window manager' : 'no window manager';
-  ui.wmState.title = on ? 'Live state comes from busybar-wm' : status.wm.reason;
-
   ui.nowApp.textContent = status.onScreen ?? (on ? 'nobody' : 'unknown');
   ui.unpin.hidden = !status.pinned;
 }
@@ -189,8 +180,7 @@ async function select(name) {
   ui.appView.hidden = false;
   ui.appName.textContent = app.name;
   ui.appSummary.textContent = app.spec.summary ?? app.packageName;
-  ui.pin.disabled = !state.status?.wm.connected;
-  ui.restart.disabled = !state.status?.wm.connected || !app.supervised;
+  renderActions();
 
   state.saved = await api('GET', `/apps/${encodeURIComponent(name)}/config`);
   renderSections();
@@ -199,6 +189,25 @@ async function select(name) {
 
 function current() {
   return state.apps.find((app) => app.name === state.selected);
+}
+
+/**
+ * The two buttons above the settings, kept in step with the rail.
+ *
+ * Offering the screen to an app that is not running would be offering nothing:
+ * there is no frame behind it to put there. Since an app can start or stop
+ * while you are looking at it, this is re-run on every poll rather than only
+ * when you pick one.
+ */
+function renderActions() {
+  const app = current();
+  if (!app) {
+    return;
+  }
+  const wm = state.status?.wm.connected ?? false;
+  ui.pin.hidden = !app.running;
+  ui.pin.disabled = !wm;
+  ui.restart.disabled = !wm || !app.supervised;
 }
 
 function renderSections() {
@@ -229,13 +238,16 @@ function sectionShell(section) {
   const title = document.createElement('h2');
   title.textContent = section.title;
 
-  const reloads = section.reloads ?? 'restart';
-  const tag = document.createElement('span');
-  tag.className = `tag ${reloads === 'live' ? 'live' : ''}`;
-  tag.textContent = reloads === 'live' ? 'picked up live' : 'needs a restart';
-
   const file = span('mono', section.file);
-  head.append(title, tag, file);
+  head.append(title, file);
+
+  // Only the good news is worth a badge. Needing a restart is the ordinary
+  // case, and labelling every section with it says nothing.
+  if ((section.reloads ?? 'restart') === 'live') {
+    const tag = span('tag live', 'picked up live');
+    head.insertBefore(tag, file);
+  }
+
   block.append(head);
 
   return block;
@@ -244,29 +256,17 @@ function sectionShell(section) {
 function envSection(section) {
   const block = sectionShell(section);
   const values = state.saved.sections[section.file] ?? {};
-  const plain = section.fields.filter((field) => !field.advanced);
-  const advanced = section.fields.filter((field) => field.advanced);
 
+  // Every field, in the order the app declared them. A setting behind a
+  // disclosure is a setting you have to already know about to find, which is
+  // the opposite of what this page is for — and `advanced` is the app's
+  // opinion about importance, not a reason to hide anything.
   const fields = document.createElement('div');
   fields.className = 'fields';
-  for (const field of plain) {
+  for (const field of section.fields) {
     fields.append(fieldRow(section, field, values[field.key]));
   }
   block.append(fields);
-
-  if (advanced.length > 0) {
-    block.append(
-      disclosure(`${advanced.length} more settings`, () => {
-        const more = document.createElement('div');
-        more.className = 'fields';
-        for (const field of advanced) {
-          more.append(fieldRow(section, field, values[field.key]));
-        }
-
-        return more;
-      }),
-    );
-  }
 
   return block;
 }
@@ -729,20 +729,6 @@ window.addEventListener('beforeunload', (event) => {
  * The tuning nobody changes on a normal day, folded away until asked for — and
  * built only then, so a section with nine settings still opens as three.
  */
-function disclosure(label, build) {
-  const button = document.createElement('button');
-  button.className = 'more';
-  button.type = 'button';
-  button.textContent = `⌄ ${label}`;
-
-  button.addEventListener('click', () => {
-    const content = build();
-    button.replaceWith(content);
-  });
-
-  return button;
-}
-
 function note(text) {
   const p = document.createElement('p');
   p.className = 'muted small';
@@ -779,6 +765,7 @@ async function poll() {
   state.status = status;
   renderStatus();
   renderApps();
+  renderActions();
 }
 
 try {

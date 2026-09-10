@@ -226,6 +226,22 @@ async function route(
     return;
   }
 
+  if (path === `${API}/screen` && method === 'GET') {
+    const display = url.searchParams.get('display') === '1' ? 1 : 0;
+    const png = await deck.screenPng(display);
+
+    response.writeHead(200, {
+      'content-type': 'image/png',
+      'content-length': png.length,
+      // The panel changes several times a second and the browser asks for it
+      // by the same URL each time; a cached frame is a frozen display.
+      'cache-control': 'no-store',
+    });
+    response.end(png);
+
+    return;
+  }
+
   send(response, 404, { error: `no route ${method} ${path}` });
 }
 

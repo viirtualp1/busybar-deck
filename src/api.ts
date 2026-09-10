@@ -11,7 +11,14 @@ import {
   type PutResult,
 } from 'busybar-config';
 import type { AppConfigSpec } from 'busybar-kit/config-spec';
-import { DeckError, detachedLive, type Live, type LiveStatus } from './live.js';
+import { decodeScreenFrame } from 'busybar-kit/screen';
+import {
+  DeckError,
+  detachedLive,
+  type Live,
+  type LiveStatus,
+  type ScreenFrame,
+} from './live.js';
 
 export type ManifestApp = { name: string; rank?: number; autostart?: boolean };
 
@@ -109,22 +116,24 @@ export class Deck {
     const supervised = new Map(this.manifestApps().map((app) => [app.name, app]));
     const names = new Set([...this.apps.keys(), ...supervised.keys()]);
 
-    return [...names].sort().map((name) => {
-      const configured = this.apps.get(name);
-      const entry = supervised.get(name);
+    return [...names]
+      .map((name) => {
+        const configured = this.apps.get(name);
+        const entry = supervised.get(name);
 
-      return {
-        name,
-        packageName: configured?.packageName ?? `busybar-${name}`,
-        rank: entry?.rank ?? 10,
-        configurable: Boolean(configured),
-        supervised: Boolean(entry),
-        running: this.safely(() => state.running(name)) ?? false,
-        onScreen: onScreen === name,
-        pinned: pinned === name,
-        spec: configured?.spec ?? { specVersion: 1, name, sections: [] },
-      };
-    });
+        return {
+          name,
+          packageName: configured?.packageName ?? `busybar-${name}`,
+          rank: entry?.rank ?? 10,
+          configurable: Boolean(configured),
+          supervised: Boolean(entry),
+          running: this.safely(() => state.running(name)) ?? false,
+          onScreen: onScreen === name,
+          pinned: pinned === name,
+          spec: configured?.spec ?? { specVersion: 1, name, sections: [] },
+        };
+      })
+      .sort(byPriority);
   }
 
   getConfig(name: string): ConfigSnapshot {
@@ -153,6 +162,40 @@ export class Deck {
 
   unpin(): void {
     this.live.state.clearPin();
+  }
+
+  /** What the device is showing, straight from the device. */
+  screen(display: 0 | 1): Promise<ScreenFrame> {
+    const read = this.live.state.screen;
+    if (!read) {
+      throw new DeckError(
+        'unavailable',
+        'nothing here can reach the Bar, so there is no frame to show',
+      );
+    }
+
+    return Promise.resolve(read(display));
+  }
+
+  /**
+   * The same frame, as something a browser will actually display.
+   *
+   * The device answers `/screen` with base64 text that decodes to raw pixels —
+   * RGB on the front, four-bit grey on the back — under a `image/bmp` header it
+   * does not honour. An `<img>` makes nothing of that, so it is turned into a
+   * real PNG here, once, rather than reimplemented in the page.
+   */
+  async screenPng(display: 0 | 1): Promise<Buffer> {
+    const frame = await this.screen(display);
+
+    try {
+      return decodeScreenFrame(frame.body, display).toPng();
+    } catch (error) {
+      throw new DeckError(
+        'unavailable',
+        `the Bar sent a frame that could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private configurable(name: string): ConfigurableApp {
@@ -213,4 +256,13 @@ function readManifest(path: string): ManifestApp[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * The order the window manager would pick them in, so the list reads as the
+ * queue for the screen rather than as an alphabet. Ties fall to the name, so
+ * two apps of equal rank do not swap places between refreshes.
+ */
+function byPriority(left: AppInfo, right: AppInfo): number {
+  return right.rank - left.rank || left.name.localeCompare(right.name);
 }

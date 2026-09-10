@@ -100,15 +100,13 @@ body {
   border-bottom: 1px solid var(--line-soft);
 }
 
-.mark {
-  width: 26px;
-  height: 12px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--led) 0%, var(--pin) 100%);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--led) 45%, transparent);
+.bar::after {
+  content: '';
+  flex: 1;
 }
 
 .bar-title {
+  flex: 1;
   display: flex;
   align-items: baseline;
   gap: 0.6rem;
@@ -119,54 +117,42 @@ body {
   letter-spacing: -0.02em;
 }
 
-.bar-title .mono {
+.search {
+  flex: 0 1 clamp(240px, 42vw, 460px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.7rem 0.5rem 0.9rem;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+
+.search:hover,
+.search:focus-visible {
+  border-color: var(--line-strong, var(--pin));
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.search-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bar-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.28rem 0.6rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 0.78rem;
-  color: var(--ink-2);
-}
-
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-
-.chip.on .dot {
-  background: var(--led);
-  box-shadow: 0 0 8px var(--led);
-}
-
-.chip.off .dot {
-  background: var(--warn);
-}
-
-.key {
+.search-keys {
   display: inline-flex;
   gap: 2px;
-  padding: 0.3rem 0.45rem;
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  cursor: pointer;
+  flex: none;
 }
 
 kbd {
@@ -310,7 +296,8 @@ kbd {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #2b323c;
+  background: var(--bad);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--bad) 55%, transparent);
 }
 
 .app-item.running .state {
@@ -595,23 +582,6 @@ button:focus-visible {
 
 .entry .drop:hover {
   color: var(--bad);
-}
-
-.more {
-  width: 100%;
-  padding: 0.7rem;
-  background: none;
-  border: 0;
-  border-top: 1px solid var(--line-soft);
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.84rem;
-  cursor: pointer;
-}
-
-.more:hover {
-  color: var(--ink);
-  background: var(--surface-2);
 }
 
 /* --- buttons ------------------------------------------------------------- */

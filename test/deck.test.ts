@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { defineConfigSpec, integerIn } from 'busybar-kit/config-spec';
+import { SCREEN } from 'busybar-kit/screen';
 import { Deck } from '../src/api.js';
 import { DeckError, detachedLive, type Live } from '../src/live.js';
 import { MAX_BODY_BYTES, MOUNT, startDeck } from '../src/server.js';
@@ -82,6 +83,12 @@ function liveStub(): Live & { restarted: string[]; pinned: string | null } {
       clearPin: () => {
         stub.pinned = null;
       },
+      // Base64 of a whole frame, which is what the device actually sends.
+      screen: (display: 0 | 1) =>
+        Promise.resolve({
+          body: Buffer.alloc(SCREEN[display].bytes).toString('base64'),
+          contentType: 'image/bmp',
+        }),
     },
   };
 
@@ -201,7 +208,7 @@ test('the scan is cached, so a polling dashboard is not a filesystem walk', asyn
 
 // --- over HTTP -------------------------------------------------------------------
 
-async function serve(options: { token?: string } = {}) {
+async function serve(options: { token?: string; live?: Live } = {}) {
   const running = await startDeck({
     profileDir: scratch(),
     live: liveStub(),
@@ -366,4 +373,62 @@ test('a detached deck names what is missing', () => {
   const live = detachedLive('no daemon here');
   assert.equal(live.status.connected, false);
   assert.throws(() => live.state.setPin('demo'), /no daemon here/);
+});
+
+test('apps come back in the order the screen would give them, not alphabetical', async () => {
+  const deck = new Deck({ profileDir: scratch(), live: liveStub() });
+  await deck.refresh();
+
+  // demo is rank 42 and ghost is rank 5, so alphabetical order would put the
+  // lower-ranked one first. The list is the queue for the screen.
+  assert.deepEqual(
+    deck.listApps().map((app) => app.name),
+    ['demo', 'ghost'],
+  );
+});
+
+test('equal ranks fall back to the name, so the list does not shuffle', async () => {
+  const deck = new Deck({
+    profileDir: scratch(),
+    live: liveStub(),
+    manifestApps: [
+      { name: 'zulu', rank: 10 },
+      { name: 'alpha', rank: 10 },
+      { name: 'demo', rank: 90 },
+    ],
+  });
+  await deck.refresh();
+
+  assert.deepEqual(
+    deck.listApps().map((app) => app.name),
+    ['demo', 'alpha', 'zulu'],
+  );
+});
+
+test('the deck serves a frame of the panel, straight from the device', async () => {
+  const { base, close } = await serve();
+  try {
+    const response = await fetch(`${base}/api/screen?display=1`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/png');
+    // A cached frame is a frozen display.
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.ok((await response.arrayBuffer()).byteLength > 0);
+  } finally {
+    await close();
+  }
+});
+
+test('without a window manager there is no frame to serve, and it says so', async () => {
+  const { base, close } = await serve({ live: detachedLive('no daemon here') });
+  try {
+    const response = await fetch(`${base}/api/screen?display=0`);
+
+    assert.equal(response.status, 503);
+    const payload = (await response.json()) as { error: string };
+    assert.match(payload.error, /nothing here can reach the Bar/);
+  } finally {
+    await close();
+  }
 });

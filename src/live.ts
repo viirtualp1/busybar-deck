@@ -7,6 +7,13 @@
  * as "running" because nobody told it otherwise is worse than one that admits
  * it is not connected.
  */
+/**
+ * A frame as the device sends it: base64 text, whatever the content type
+ * claims. Kept as text rather than bytes on purpose — a Buffer of base64 looks
+ * exactly like a Buffer of pixels, and the decoder cannot tell them apart.
+ */
+export type ScreenFrame = { body: string; contentType: string };
+
 export type LiveState = {
   running: (name: string) => boolean;
   onScreen: () => string | null;
@@ -14,6 +21,19 @@ export type LiveState = {
   restart: (name: string) => Promise<void> | void;
   setPin: (name: string) => void;
   clearPin: () => void;
+  /**
+   * A photograph of a panel, if whoever mounted this can reach the device.
+   *
+   * The deck has no connection to the Bar of its own — and should not: the
+   * credentials belong to the daemon in front of it, and the browser can send
+   * no headers on an `<img>` anyway. So the frame is fetched by the host and
+   * passed through here.
+   *
+   * Optional, because a host may have live state and still no way to reach the
+   * hardware. Leaving it out is answered the same way a detached deck answers
+   * everything else: by saying so.
+   */
+  screen?: (display: 0 | 1) => Promise<ScreenFrame>;
 };
 
 export type LiveStatus = { connected: true } | { connected: false; reason: string };

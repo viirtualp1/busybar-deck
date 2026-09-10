@@ -14,19 +14,11 @@
     <a class="skip" href="#editor">Skip to settings</a>
 
     <header class="bar">
-      <div class="mark" aria-hidden="true"></div>
-      <div class="bar-title">
-        <strong>Deck</strong>
-        <span id="profile" class="muted mono">—</span>
-      </div>
-      <div class="bar-right">
-        <span id="wm-state" class="chip" title="Window manager">
-          <i class="dot"></i><span>checking…</span>
-        </span>
-        <button id="open-palette" class="key" title="Search (Ctrl+K)">
-          <kbd>Ctrl</kbd><kbd>K</kbd>
-        </button>
-      </div>
+      <div class="bar-title"><strong>Deck</strong></div>
+      <button id="open-palette" class="search" title="Search (Ctrl+K)">
+        <span class="search-text">Jump to an app or a setting</span>
+        <span class="search-keys"><kbd>Ctrl</kbd><kbd>K</kbd></span>
+      </button>
     </header>
 
     <main class="shell">
@@ -42,7 +34,6 @@
               <figcaption>back · 160×80</figcaption>
             </figure>
           </div>
-          <p id="screen-note" class="muted small">Looking for the Bar…</p>
           <div class="now">
             <span class="muted small">Showing</span>
             <strong id="now-app">nobody</strong>

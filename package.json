@@ -1,6 +1,6 @@
 {
   "name": "busybar-deck",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "A control deck for the BUSY Bar: what is on screen, which app owns it, and every app's settings — in a browser",
   "author": "viirtualp1",
   "license": "MIT",
@@ -38,6 +38,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.build.json && busybar-fix-esm",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -50,8 +51,8 @@
     "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
-    "busybar-config": "^1.1.0",
-    "busybar-kit": "^2.0.0"
+    "busybar-config": "^1.2.0",
+    "busybar-kit": "^2.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
