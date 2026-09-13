@@ -13,8 +13,16 @@ import {
 import type { AppConfigSpec } from 'busybar-kit/config-spec';
 import { decodeScreenFrame } from 'busybar-kit/screen';
 import {
+  Installer,
+  type CatalogEntry,
+  type InstallJob,
+  type InstallRequest,
+  type NpmRunner,
+} from './install.js';
+import {
   DeckError,
   detachedLive,
+  type AppHealth,
   type Live,
   type LiveStatus,
   type ScreenFrame,
@@ -25,10 +33,16 @@ export type ManifestApp = { name: string; rank?: number; autostart?: boolean };
 export type DeckOptions = {
   profileDir: string;
   live?: Live;
-  /** Read from `wm.config.json`; ranks and what is supervised. */
-  manifestApps?: ManifestApp[];
+  /**
+   * Ranks and what is supervised. A function when the host's list can grow
+   * while it runs; left out, `wm.config.json` is read instead.
+   */
+  manifestApps?: ManifestApp[] | (() => ManifestApp[]);
   /** How long a discovery scan is believed. */
   cacheMs?: number;
+  /** Injected by the tests, which install nothing for real. */
+  runNpm?: NpmRunner;
+  fetch?: typeof fetch;
 };
 
 export type AppInfo = {
@@ -40,6 +54,8 @@ export type AppInfo = {
   running: boolean;
   onScreen: boolean;
   pinned: boolean;
+  /** Why it is running or not, when the window manager can say. */
+  health: AppHealth | null;
   spec: AppConfigSpec;
 };
 
@@ -65,8 +81,27 @@ export class Deck {
   private scanning: Promise<void> | null = null;
   private manifestAt = 0;
   private manifest: ManifestApp[] = [];
+  private readonly installer: Installer;
 
-  constructor(private readonly options: DeckOptions) {}
+  constructor(private readonly options: DeckOptions) {
+    this.installer = new Installer({
+      profileDir: options.profileDir,
+      ...(options.runNpm ? { runNpm: options.runNpm } : {}),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      manifestNames: () => this.manifestApps().map((app) => app.name),
+      onInstalled: async (name) => {
+        this.manifestAt = 0;
+        await this.refresh(true);
+        const add = this.options.live?.state.addApp;
+        if (!add) {
+          return false;
+        }
+        await add(name);
+
+        return true;
+      },
+    });
+  }
 
   private get live(): Live {
     return this.options.live ?? detachedLive();
@@ -130,6 +165,7 @@ export class Deck {
           running: this.safely(() => state.running(name)) ?? false,
           onScreen: onScreen === name,
           pinned: pinned === name,
+          health: this.safely(() => state.health?.(name) ?? null),
           spec: configured?.spec ?? { specVersion: 1, name, sections: [] },
         };
       })
@@ -162,6 +198,20 @@ export class Deck {
 
   unpin(): void {
     this.live.state.clearPin();
+  }
+
+  /** BUSY Bar apps on npm, marked with what this profile already has. */
+  catalog(): Promise<CatalogEntry[]> {
+    return this.installer.catalog();
+  }
+
+  /** Starts an install; follow it with `installJob`. */
+  install(request: InstallRequest): InstallJob {
+    return this.installer.start(request);
+  }
+
+  installJob(id: string): InstallJob {
+    return this.installer.job(id);
   }
 
   /** What the device is showing, straight from the device. */
@@ -224,8 +274,9 @@ export class Deck {
 
   /** Re-read when the file changes, so a rank edit does not need a restart. */
   private manifestApps(): ManifestApp[] {
-    if (this.options.manifestApps) {
-      return this.options.manifestApps;
+    const given = this.options.manifestApps;
+    if (given) {
+      return typeof given === 'function' ? given() : given;
     }
 
     const path = manifestPath(this.options.profileDir);

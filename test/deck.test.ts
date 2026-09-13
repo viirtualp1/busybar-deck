@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -403,6 +410,169 @@ test('equal ranks fall back to the name, so the list does not shuffle', async ()
     deck.listApps().map((app) => app.name),
     ['demo', 'alpha', 'zulu'],
   );
+});
+
+// --- why an app is down, and adding one -------------------------------------------
+
+test('an app that is down carries the reason the window manager gave', async () => {
+  const live = liveStub();
+  live.state.health = (name) =>
+    name === 'ghost'
+      ? {
+          state: 'exited',
+          message: 'Crashed with exit code 3',
+          exitCode: 3,
+          output: ['no token'],
+        }
+      : null;
+  const deck = new Deck({ profileDir: scratch(), live });
+  await deck.refresh();
+
+  const ghost = deck.listApps().find((app) => app.name === 'ghost');
+  assert.equal(ghost?.health?.state, 'exited');
+  assert.deepEqual(ghost?.health?.output, ['no token']);
+  assert.equal(deck.listApps().find((app) => app.name === 'demo')?.health, null);
+});
+
+/** An npm that "installs" by writing the package straight into node_modules. */
+function fakeNpm(
+  dir: string,
+  pkg: Record<string, unknown>,
+  files: Record<string, unknown> = {},
+) {
+  const calls: string[][] = [];
+  const runNpm = (args: string[], _cwd: string, onLine: (line: string) => void) => {
+    calls.push(args);
+    const into = join(dir, 'node_modules', String(pkg['name']));
+    mkdirSync(into, { recursive: true });
+    writeFileSync(join(into, 'package.json'), JSON.stringify(pkg));
+    for (const [file, content] of Object.entries(files)) {
+      writeFileSync(join(into, file), JSON.stringify(content));
+    }
+    onLine('added 1 package');
+
+    return Promise.resolve();
+  };
+
+  return { runNpm, calls };
+}
+
+async function finished(deck: Deck, id: string) {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    const job = deck.installJob(id);
+    if (job.state !== 'running' || Date.now() > deadline) {
+      return job;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+test('installing an app writes it into the manifest and hands it to the window manager', async () => {
+  const dir = scratch();
+  const added: string[] = [];
+  const live = liveStub();
+  live.state.addApp = (name) => {
+    added.push(name);
+  };
+  const npm = fakeNpm(
+    dir,
+    {
+      name: 'busybar-fresh',
+      bin: { 'busybar-fresh': 'dist/index.js' },
+      busybar: { configJson: './spec.json' },
+    },
+    { 'spec.json': { ...SPEC, name: 'freshly' } },
+  );
+  const deck = new Deck({ profileDir: dir, live, runNpm: npm.runNpm });
+
+  const job = await finished(
+    deck,
+    deck.install({ packageName: 'busybar-fresh', rank: 55 }).id,
+  );
+
+  assert.equal(job.state, 'done', job.message);
+  assert.equal(job.name, 'freshly', 'named after what it draws as, from its spec');
+  assert.ok(
+    npm.calls[0]?.includes('--ignore-scripts'),
+    'nothing in the package gets to run',
+  );
+  const manifest = JSON.parse(readFileSync(join(dir, 'wm.config.json'), 'utf8')) as {
+    apps: { name: string; rank: number }[];
+  };
+  assert.deepEqual(manifest.apps.at(-1), { name: 'freshly', rank: 55 });
+  assert.ok(existsSync(join(dir, 'freshly')), 'with a folder for its .env');
+  assert.deepEqual(added, ['freshly']);
+  assert.ok(deck.listApps().some((app) => app.name === 'freshly'));
+});
+
+test('a library is installed but not added, and the reason is the message', async () => {
+  const dir = scratch();
+  const npm = fakeNpm(dir, { name: 'busybar-lib' });
+  const deck = new Deck({ profileDir: dir, live: liveStub(), runNpm: npm.runNpm });
+
+  const job = await finished(deck, deck.install({ packageName: 'busybar-lib' }).id);
+
+  assert.equal(job.state, 'failed');
+  assert.match(job.message, /no program to run/);
+  assert.doesNotMatch(readFileSync(join(dir, 'wm.config.json'), 'utf8'), /lib/);
+});
+
+test('a package name that is not one never reaches npm', () => {
+  const npm = fakeNpm(scratch(), { name: 'x' });
+  const deck = new Deck({ profileDir: scratch(), runNpm: npm.runNpm });
+
+  for (const packageName of ['busybar-x && calc', '../evil', '', 'a b']) {
+    assert.throws(
+      () => deck.install({ packageName }),
+      (error: unknown) => error instanceof DeckError && error.kind === 'invalid',
+      packageName,
+    );
+  }
+  assert.equal(npm.calls.length, 0);
+});
+
+test('the catalog lists apps from npm, not the libraries tagged the same way', async () => {
+  const dir = scratch();
+  let asked = 0;
+  const answers: Record<string, unknown> = {
+    search: {
+      objects: [
+        { package: { name: 'busybar-wm' } },
+        { package: { name: 'busybar-demo' } },
+        { package: { name: 'busybar-helper' } },
+      ],
+    },
+    'busybar-demo': { version: '1.0.0', description: 'demo', bin: 'x.js', busybar: {} },
+    'busybar-helper': { version: '2.0.0', description: 'a library' },
+  };
+  const fakeFetch = (url: string) => {
+    asked += 1;
+    const key = url.includes('/-/v1/search')
+      ? 'search'
+      : (/registry\.npmjs\.org\/([^/]+)\/latest/.exec(url)?.[1] ?? '');
+
+    return Promise.resolve(new Response(JSON.stringify(answers[key] ?? {})));
+  };
+  const deck = new Deck({
+    profileDir: dir,
+    live: liveStub(),
+    fetch: fakeFetch as typeof fetch,
+  });
+
+  const packages = await deck.catalog();
+
+  assert.deepEqual(
+    packages.map((entry) => entry.packageName),
+    ['busybar-demo'],
+    'the wm is a tool and the helper has nothing to run',
+  );
+  assert.equal(packages[0]?.installed, true, 'the scratch profile has it');
+  assert.equal(packages[0]?.added, true, 'and its manifest lists it');
+
+  const before = asked;
+  await deck.catalog();
+  assert.equal(asked, before, 'npm is not asked again every time the dialog opens');
 });
 
 test('the deck serves a frame of the panel, straight from the device', async () => {

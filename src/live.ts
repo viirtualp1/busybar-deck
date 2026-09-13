@@ -14,6 +14,21 @@
  */
 export type ScreenFrame = { body: string; contentType: string };
 
+/**
+ * Why an app is or is not running, as the window manager explains it — the
+ * same shape as busybar-wm's own, repeated here so neither package imports the
+ * other for a type.
+ */
+export type AppHealth = {
+  state: 'running' | 'waiting' | 'restarting' | 'exited' | 'broken' | 'unmanaged';
+  message: string;
+  since?: number;
+  restartAt?: number;
+  exitCode?: number | null;
+  signal?: string | null;
+  output: string[];
+};
+
 export type LiveState = {
   running: (name: string) => boolean;
   onScreen: () => string | null;
@@ -34,6 +49,13 @@ export type LiveState = {
    * everything else: by saying so.
    */
   screen?: (display: 0 | 1) => Promise<ScreenFrame>;
+  /** Why an app is where it is; null for one the host knows nothing about. */
+  health?: (name: string) => AppHealth | null;
+  /**
+   * Asks the host to take on an app just written into the manifest. Left out,
+   * an installed app waits for the window manager's next start.
+   */
+  addApp?: (name: string) => Promise<void> | void;
 };
 
 export type LiveStatus = { connected: true } | { connected: false; reason: string };

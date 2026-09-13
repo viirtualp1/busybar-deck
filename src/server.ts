@@ -11,6 +11,7 @@ import { extname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PutConfigBody } from 'busybar-config';
 import { Deck, type DeckOptions } from './api.js';
+import type { InstallRequest } from './install.js';
 import { DeckError } from './live.js';
 
 export const MOUNT = '/deck';
@@ -139,6 +140,7 @@ const API = `${MOUNT}/api`;
 const CONFIG = new RegExp(`^${API}/apps/([^/]+)/config$`);
 const RESTART = new RegExp(`^${API}/apps/([^/]+)/restart$`);
 const PIN = new RegExp(`^${API}/pin/([^/]+)$`);
+const INSTALL_JOB = new RegExp(`^${API}/install/([^/]+)$`);
 
 async function route(
   request: IncomingMessage,
@@ -194,7 +196,7 @@ async function route(
       return;
     }
     if (method === 'PUT') {
-      send(response, 200, deck.putConfig(name, await body(request)));
+      send(response, 200, deck.putConfig(name, await body<PutConfigBody>(request)));
 
       return;
     }
@@ -222,6 +224,25 @@ async function route(
   if (path === `${API}/pin` && method === 'DELETE') {
     deck.unpin();
     send(response, 200, { pinned: null });
+
+    return;
+  }
+
+  if (path === `${API}/catalog` && method === 'GET') {
+    send(response, 200, { packages: await deck.catalog() });
+
+    return;
+  }
+
+  if (path === `${API}/install` && method === 'POST') {
+    send(response, 202, deck.install(await body<InstallRequest>(request)));
+
+    return;
+  }
+
+  const installJob = INSTALL_JOB.exec(path);
+  if (installJob && method === 'GET') {
+    send(response, 200, deck.installJob(decodeURIComponent(installJob[1] ?? '')));
 
     return;
   }
@@ -385,7 +406,7 @@ function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function body(request: IncomingMessage): Promise<PutConfigBody> {
+async function body<T>(request: IncomingMessage): Promise<T> {
   const text = await new Promise<string>((done, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -404,7 +425,7 @@ async function body(request: IncomingMessage): Promise<PutConfigBody> {
   });
 
   try {
-    return JSON.parse(text) as PutConfigBody;
+    return JSON.parse(text) as T;
   } catch {
     throw new DeckError('invalid', 'the body is not JSON');
   }

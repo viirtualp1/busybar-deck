@@ -382,7 +382,8 @@ kbd {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   margin-bottom: 1rem;
-  overflow: hidden;
+  /* Visible, so the info cards and lookups can hang past the edge. */
+  overflow: visible;
 }
 
 .section-head {
@@ -446,16 +447,10 @@ kbd {
   font-size: 0.9rem;
 }
 
-.field .hint {
-  grid-column: 1;
-  margin: 0.15rem 0 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
 .field .control {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1;
+  position: relative;
 }
 
 input[type='text'],
@@ -542,7 +537,6 @@ button:focus-visible {
   border: 1px solid var(--line-soft);
   border-radius: var(--r);
   background: var(--bg-soft);
-  overflow: hidden;
 }
 
 .entry > summary {
@@ -841,4 +835,416 @@ button.ghost.small {
 
 .add:active {
   transform: translateY(1px);
+}
+
+/* --- a field's title: optional, label, and the info behind it -------------- */
+
+.field-title {
+  display: grid;
+  gap: 0.2rem;
+  align-content: start;
+}
+
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.optional {
+  justify-self: start;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.info {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-button {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font:
+    italic 600 0.62rem/1 Georgia,
+    serif;
+  cursor: help;
+}
+
+.info:hover .info-button,
+.info.open .info-button {
+  color: var(--ink);
+  border-color: var(--ink-2);
+}
+
+.info-tip {
+  display: none;
+  position: absolute;
+  z-index: 25;
+  top: calc(100% + 8px);
+  left: -0.6rem;
+  width: min(22rem, 80vw);
+  padding: 0.75rem 0.85rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 55%);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+/* A bridge over the gap, so moving onto the card does not close it. */
+.info-tip::before {
+  content: '';
+  position: absolute;
+  inset: -10px 0 auto;
+  height: 10px;
+}
+
+.info:hover .info-tip,
+.info:focus-within .info-tip,
+.info.open .info-tip {
+  display: block;
+}
+
+.info-tip p {
+  margin: 0;
+}
+
+.info-tip p + p {
+  margin-top: 0.55rem;
+}
+
+.info-tip .info-lead {
+  color: var(--ink);
+}
+
+.info-tip a {
+  color: var(--pin);
+}
+
+.info-tip code {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  padding: 0.05rem 0.25rem;
+  border-radius: 4px;
+  background: var(--bg-soft);
+}
+
+/* --- what a value turned out to be ----------------------------------------- */
+
+.lookup {
+  position: absolute;
+  z-index: 24;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 50%);
+  font-size: 0.8rem;
+  animation: rise-in 0.12s ease-out;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.lookup-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lookup.found {
+  border-color: color-mix(in srgb, var(--led) 45%, transparent);
+}
+
+.lookup.found .lookup-title::before {
+  content: '✓ ';
+  color: var(--led);
+}
+
+.lookup.pending .lookup-title {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.lookup.missing {
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
+.lookup.missing .lookup-title {
+  color: var(--warn);
+  font-weight: 400;
+}
+
+.lookup.failed .lookup-title {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.lookup-detail,
+.lookup-dates {
+  color: var(--muted);
+}
+
+.lookup-detail {
+  text-transform: capitalize;
+}
+
+/* --- why an app is down ------------------------------------------------------ */
+
+.alert {
+  --tone: var(--bad);
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin-bottom: 1.1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--tone) 8%, var(--surface));
+}
+
+.alert.warn {
+  --tone: var(--warn);
+}
+
+.alert.info {
+  --tone: var(--pin);
+}
+
+.alert-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--tone);
+  color: #0b0d10;
+  font: 700 0.72rem/1 var(--sans);
+  font-style: normal;
+}
+
+.alert-icon::before {
+  content: '!';
+}
+
+.alert.info .alert-icon::before {
+  content: 'i';
+}
+
+.alert-body {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.alert-title {
+  font-weight: 600;
+  color: var(--tone);
+}
+
+.alert-text {
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.alert-when {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.alert details {
+  margin-top: 0.35rem;
+}
+
+.alert summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 0.8rem;
+}
+
+.alert pre {
+  margin: 0.45rem 0 0;
+  padding: 0.6rem 0.7rem;
+  max-height: 14rem;
+  overflow: auto;
+  background: var(--bg-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  font: 0.74rem/1.45 var(--mono);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- adding an app ------------------------------------------------------------- */
+
+.add-app {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.add-app:hover {
+  color: var(--led);
+  border-color: color-mix(in srgb, var(--led) 55%, transparent);
+}
+
+.dialog-box {
+  width: min(620px, 94vw);
+  max-height: 80vh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 60%);
+  overflow: hidden;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.dialog-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.dialog-head button {
+  margin-left: auto;
+}
+
+.dialog-box .dialog-search {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 0.85rem 1rem;
+  background: none;
+}
+
+.dialog-box .dialog-search:focus-visible {
+  box-shadow: none;
+  border-color: var(--line);
+}
+
+.catalog {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  overflow: auto;
+  min-height: 6rem;
+}
+
+.catalog-item {
+  width: 100%;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.6rem 0.75rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.catalog-item:hover:not(:disabled),
+.catalog-item[aria-pressed='true'] {
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.catalog-item[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--led) 50%, transparent);
+}
+
+.catalog-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.catalog-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.catalog-head .badge {
+  margin-left: auto;
+}
+
+.catalog-text {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.installer-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6.5rem auto;
+  gap: 0.6rem;
+  align-items: end;
+  padding: 0.8rem 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.installer-form label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.installer-form .wide {
+  grid-column: 1 / -1;
+}
+
+.installer-log {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  max-height: 10rem;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: var(--bg-soft);
+  font: 0.72rem/1.45 var(--mono);
+  color: var(--ink-2);
+  white-space: pre-wrap;
 }

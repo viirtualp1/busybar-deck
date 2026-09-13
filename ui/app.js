@@ -27,6 +27,18 @@ const ui = {
   paletteInput: el('palette-input'),
   paletteList: el('palette-list'),
   toast: el('toast'),
+  appAlert: el('app-alert'),
+  addApp: el('add-app'),
+  installer: el('installer'),
+  installerClose: el('installer-close'),
+  installerSearch: el('installer-search'),
+  installerList: el('installer-list'),
+  installerForm: el('installer-form'),
+  installerPackage: el('installer-package'),
+  installerName: el('installer-name'),
+  installerRank: el('installer-rank'),
+  installerGo: el('installer-go'),
+  installerLog: el('installer-log'),
 };
 
 /** Everything the page knows. Rendering is a function of this and nothing else. */
@@ -222,8 +234,129 @@ function renderActions() {
   // is the one case the button is for.
   ui.pin.hidden = app.onScreen || !app.running;
   ui.pin.disabled = !wm;
-  ui.restart.disabled = !wm || !app.supervised;
+  // Restarting something that is not running is starting it, so it says that.
+  ui.restart.textContent = app.running ? 'Restart' : 'Start';
+  ui.restart.disabled = !wm || !app.supervised || app.health?.state === 'unmanaged';
   ui.appDot.hidden = !app.onScreen;
+  renderAlert(app);
+}
+
+// --- why an app is down -------------------------------------------------------------
+
+const ALERT = {
+  waiting: { tone: 'info', title: 'Not started' },
+  restarting: { tone: 'bad', title: 'Crashed, restarting' },
+  exited: { tone: 'bad', title: 'Stopped' },
+  broken: { tone: 'bad', title: 'Cannot start' },
+  unmanaged: { tone: 'warn', title: 'Not installed' },
+};
+
+let alertKey = '';
+
+/**
+ * The red dot, explained, above the app's name.
+ *
+ * Rebuilt only when what it says changes — it is re-run on every poll, and a
+ * rebuild would snap shut the output you had just opened to read.
+ */
+function renderAlert(app) {
+  const view = alertView(app);
+  const key = view ? JSON.stringify({ ...view, name: app.name }) : '';
+  if (key === alertKey) {
+    return;
+  }
+  alertKey = key;
+  ui.appAlert.hidden = !view;
+  if (!view) {
+    ui.appAlert.replaceChildren();
+
+    return;
+  }
+
+  const open = ui.appAlert.querySelector('details')?.open ?? false;
+  ui.appAlert.className = `alert ${view.tone}`;
+
+  const body = document.createElement('div');
+  body.className = 'alert-body';
+  body.append(span('alert-title', view.title), span('alert-text', view.text));
+  if (view.when) {
+    body.append(span('alert-when', view.when));
+  }
+  if (view.output?.length) {
+    const details = document.createElement('details');
+    details.open = open;
+    details.append(
+      Object.assign(document.createElement('summary'), {
+        textContent: `Last ${view.output.length === 1 ? 'line' : `${view.output.length} lines`} it printed`,
+      }),
+      Object.assign(document.createElement('pre'), {
+        textContent: view.output.join('\n'),
+      }),
+    );
+    body.append(details);
+  }
+
+  ui.appAlert.replaceChildren(
+    Object.assign(document.createElement('i'), {
+      className: 'alert-icon',
+      ariaHidden: 'true',
+    }),
+    body,
+  );
+}
+
+function alertView(app) {
+  const wm = state.status?.wm;
+  if (wm && !wm.connected) {
+    return {
+      tone: 'info',
+      title: 'Not connected to busybar-wm',
+      text: `This deck is running on its own, so it cannot tell whether ${app.name} is running.`,
+    };
+  }
+  if (app.running) {
+    return null;
+  }
+
+  const health = app.health;
+  if (!health) {
+    return { tone: 'bad', title: 'Offline', text: 'The window manager did not say why.' };
+  }
+
+  const look = ALERT[health.state] ?? { tone: 'bad', title: 'Offline' };
+  // Minutes, not seconds: this re-renders every poll, and a clock that ticks
+  // in the key would rebuild it every time.
+  const when = health.restartAt
+    ? `Next try ${relative(health.restartAt, 'minute')}`
+    : health.since
+      ? `Since ${relative(health.since, 'minute')}`
+      : '';
+
+  return { ...look, text: sentence(health.message), when, output: health.output };
+}
+
+function sentence(text) {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/** "in 2 minutes", "5 minutes ago" — in the reader's own language. */
+function relative(at, finest = 'second') {
+  const seconds = Math.round((at - Date.now()) / 1000);
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  const abs = Math.abs(seconds);
+  if (abs < 60 && finest === 'second') {
+    return format.format(seconds, 'second');
+  }
+  if (abs < 3600) {
+    return abs < 60
+      ? format.format(0, 'minute')
+      : format.format(Math.round(seconds / 60), 'minute');
+  }
+  if (abs < 86_400) {
+    return format.format(Math.round(seconds / 3600), 'hour');
+  }
+
+  return format.format(Math.round(seconds / 86_400), 'day');
 }
 
 function renderSections() {
@@ -371,17 +504,24 @@ function fieldRow(section, field, raw, where = {}) {
   const row = document.createElement('div');
   row.className = 'field';
 
+  const title = document.createElement('div');
+  title.className = 'field-title';
+  if (isOptional(field)) {
+    title.append(span('optional', 'optional'));
+  }
+  const line = document.createElement('div');
+  line.className = 'field-label';
   const label = document.createElement('label');
   label.htmlFor = id;
   label.textContent = field.label;
-  row.append(label);
-
-  if (field.hint) {
-    const hint = document.createElement('p');
-    hint.className = 'hint';
-    hint.textContent = field.hint;
-    row.append(hint);
+  line.append(label);
+  // The explanation waits behind a button rather than sitting under every
+  // label: read once, it is noise on every visit after.
+  if (field.hint || field.help) {
+    line.append(infoButton(field));
   }
+  title.append(line);
+  row.append(title);
 
   const holder = document.createElement('div');
   holder.className = 'control';
@@ -416,9 +556,276 @@ function fieldRow(section, field, raw, where = {}) {
 
   wire(control, onInput);
   holder.append(control);
+  if (field.lookup && control.tagName === 'INPUT') {
+    attachLookup(field, control, holder);
+  }
   row.append(holder, error);
 
   return row;
+}
+
+/**
+ * Whether leaving it empty is a perfectly good answer.
+ *
+ * A switch or a list always holds one of its values, so "optional" would say
+ * nothing about them; it is a box you can type into and walk away from.
+ */
+function isOptional(field) {
+  if (field.type === 'boolean' || field.type === 'select') {
+    return false;
+  }
+
+  return !field.required && !(field.rules ?? []).some((rule) => rule.kind === 'required');
+}
+
+/** The "i" beside a label: what the setting is for, and where to get it. */
+function infoButton(field) {
+  const wrap = document.createElement('span');
+  wrap.className = 'info';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'info-button';
+  button.textContent = 'i';
+  button.setAttribute('aria-label', `About ${field.label}`);
+
+  const tip = document.createElement('div');
+  tip.className = 'info-tip';
+  tip.id = `t${(uid += 1)}`;
+  tip.setAttribute('role', 'tooltip');
+  button.setAttribute('aria-describedby', tip.id);
+
+  if (field.hint) {
+    tip.append(paragraph(field.hint, 'info-lead'));
+  }
+  for (const text of (field.help ?? '').split(/\n\s*\n/)) {
+    if (text.trim()) {
+      tip.append(paragraph(text.trim()));
+    }
+  }
+
+  // Hover opens it; a click pins it for anyone reading on a touch screen or
+  // following a link inside.
+  button.addEventListener('click', () => wrap.classList.toggle('open'));
+  document.addEventListener('click', (event) => {
+    if (!wrap.contains(event.target)) {
+      wrap.classList.remove('open');
+    }
+  });
+
+  wrap.append(button, tip);
+
+  return wrap;
+}
+
+/** A paragraph whose addresses are links, and whose `code` is code. */
+function paragraph(text, className = '') {
+  const p = document.createElement('p');
+  p.className = className;
+  for (const part of text.split(/(https?:\/\/[^\s,)]+[^\s,).]|`[^`]+`)/)) {
+    if (!part) {
+      continue;
+    }
+    if (part.startsWith('`')) {
+      p.append(
+        Object.assign(document.createElement('code'), { textContent: part.slice(1, -1) }),
+      );
+    } else if (/^https?:\/\//.test(part)) {
+      p.append(
+        Object.assign(document.createElement('a'), {
+          href: part,
+          textContent: part.replace(/^https?:\/\/(www\.)?/, ''),
+          target: '_blank',
+          rel: 'noopener noreferrer',
+        }),
+      );
+    } else {
+      p.append(part);
+    }
+  }
+
+  return p;
+}
+
+// --- checking a value against the world ------------------------------------------
+
+const LOOKUP_DEBOUNCE_MS = 450;
+
+/** Answers already had, so focusing a field again does not ask again. */
+const looked = new Map();
+
+/**
+ * A card above the field saying what the value turned out to be.
+ *
+ * Typing is debounced and a paste is not special — it is just input that
+ * arrived all at once. Only the newest question's answer is shown, so a slow
+ * reply to something you have since deleted cannot overwrite a fast one.
+ */
+function attachLookup(field, input, holder) {
+  const spec = field.lookup;
+  const card = document.createElement('div');
+  card.className = 'lookup';
+  card.hidden = true;
+  card.setAttribute('role', 'status');
+  holder.classList.add('has-lookup');
+  holder.prepend(card);
+
+  let timer = null;
+  let asked = 0;
+
+  const show = async () => {
+    const value = input.value.trim();
+    const ticket = (asked += 1);
+    if (
+      !value ||
+      (spec.skip ?? []).includes(value) ||
+      validateValue(field.rules, value, field)
+    ) {
+      card.hidden = true;
+
+      return;
+    }
+
+    card.hidden = false;
+    card.className = 'lookup pending';
+    card.replaceChildren(span('lookup-title', 'Looking it up…'));
+
+    try {
+      const found = await lookupValue(spec, value);
+      if (ticket !== asked) {
+        return;
+      }
+      card.className = 'lookup found';
+      card.replaceChildren(span('lookup-title', found.title));
+      if (found.detail) {
+        card.append(span('lookup-detail', found.detail));
+      }
+      if (found.dates) {
+        card.append(span('lookup-dates', found.dates));
+      }
+    } catch (error) {
+      if (ticket !== asked) {
+        return;
+      }
+      card.className = `lookup ${error.missing ? 'missing' : 'failed'}`;
+      card.replaceChildren(span('lookup-title', error.message));
+    }
+  };
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(show, LOOKUP_DEBOUNCE_MS);
+  });
+  input.addEventListener('focus', () => void show());
+  input.addEventListener('blur', () => {
+    clearTimeout(timer);
+    asked += 1;
+    card.hidden = true;
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      card.hidden = true;
+    }
+  });
+}
+
+function lookupValue(spec, value) {
+  const key = `${spec.url}\n${value}`;
+  if (!looked.has(key)) {
+    const pending = resolveLookup(spec, value);
+    looked.set(key, pending);
+    // A network hiccup should not be remembered as the answer.
+    pending.catch((error) => {
+      if (!error.missing) {
+        looked.delete(key);
+      }
+    });
+  }
+
+  return looked.get(key);
+}
+
+async function resolveLookup(spec, value) {
+  const fill = (url) => url.replaceAll('{value}', encodeURIComponent(value));
+  const [answer, list] = await Promise.all([
+    fetchJson(fill(spec.url)),
+    // The dates are a nicety; failing to get them must not hide the name.
+    spec.span ? fetchJson(fill(spec.span.url)).catch(() => null) : null,
+  ]);
+
+  const flat = flatten(answer);
+  const title = flat ? renderSummary(spec.title, flat) : '';
+  if (!title) {
+    throw Object.assign(new Error(spec.missing ?? 'Nothing found for that'), {
+      missing: true,
+    });
+  }
+
+  return {
+    title,
+    detail: spec.detail ? renderSummary(spec.detail, flat) : '',
+    dates: dateSpan(list, spec.span),
+  };
+}
+
+async function fetchJson(url) {
+  const host = /^https?:\/\/([^/:]+)/.exec(url)?.[1] ?? 'the server';
+  let response;
+  try {
+    response = await fetch(url, { headers: { accept: 'application/json' } });
+  } catch {
+    throw new Error(`Could not reach ${host} to check`);
+  }
+  if (!response.ok) {
+    throw new Error(`${host} answered ${response.status}`);
+  }
+  const text = await response.text();
+
+  // An empty body is how some APIs say "no such thing".
+  try {
+    return text.trim() ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The top level of an answer, as the strings a template reads. */
+function flatten(answer) {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+    return null;
+  }
+
+  return Object.fromEntries(
+    Object.entries(answer)
+      .filter(([, item]) => ['string', 'number', 'boolean'].includes(typeof item))
+      .map(([key, item]) => [key, String(item)]),
+  );
+}
+
+/**
+ * The first and last date in a list, in the reader's own format.
+ *
+ * `Intl` with no locale is whatever the system is set to, so this reads
+ * `4–14 Sept 2025` for one person and `Sep 4 – 14, 2025` for another without
+ * either of them being wrong.
+ */
+function dateSpan(list, spec) {
+  if (!spec || !Array.isArray(list)) {
+    return '';
+  }
+  const scale = spec.unit === 'seconds' ? 1000 : 1;
+  const times = list
+    .map((item) => Number(item?.[spec.field]) * scale)
+    .filter((time) => Number.isFinite(time) && time > 0);
+  if (times.length === 0) {
+    return '';
+  }
+
+  const format = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+  const from = Math.min(...times);
+  const to = Math.max(...times);
+
+  return `${spec.label}: ${format.formatRange(from, to)}`;
 }
 
 function makeControl(field, value, secretLength, id) {
@@ -775,6 +1182,202 @@ function flash(message, bad = false) {
 
 function truthy(value) {
   return value === '1' || /^(true|yes|on)$/i.test(value);
+}
+
+// --- adding an app ------------------------------------------------------------------
+
+const installer = {
+  packages: [],
+  loaded: false,
+  loading: null,
+  busy: false,
+  nameTouched: false,
+};
+
+function openInstaller() {
+  ui.installer.hidden = false;
+  ui.installerSearch.value = '';
+  ui.installerSearch.focus();
+  renderCatalog();
+  void loadCatalog();
+}
+
+function closeInstaller() {
+  ui.installer.hidden = true;
+}
+
+async function loadCatalog() {
+  if (installer.loaded || installer.loading) {
+    return;
+  }
+  ui.installerList.replaceChildren(note('Asking npm what there is…'));
+  installer.loading = api('GET', '/catalog')
+    .then(({ packages }) => {
+      installer.packages = packages;
+      installer.loaded = true;
+      renderCatalog();
+    })
+    .catch((error) => {
+      ui.installerList.replaceChildren(
+        note(`${error.message}. You can still install by package name below.`),
+      );
+    })
+    .finally(() => {
+      installer.loading = null;
+    });
+  await installer.loading;
+}
+
+function renderCatalog() {
+  if (!installer.loaded) {
+    return;
+  }
+  const needle = ui.installerSearch.value.trim().toLowerCase();
+  const hits = installer.packages.filter(
+    (entry) =>
+      !needle ||
+      `${entry.packageName} ${entry.description}`.toLowerCase().includes(needle),
+  );
+
+  if (hits.length === 0) {
+    ui.installerList.replaceChildren(
+      note(
+        needle
+          ? 'Nothing on npm matches. Type the package name below to install it anyway.'
+          : 'npm has no BUSY Bar apps listed right now.',
+      ),
+    );
+
+    return;
+  }
+
+  ui.installerList.replaceChildren(
+    ...hits.map((entry) => {
+      const li = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'catalog-item';
+      button.disabled = entry.added;
+      button.setAttribute(
+        'aria-pressed',
+        String(ui.installerPackage.value === entry.packageName),
+      );
+
+      const head = document.createElement('span');
+      head.className = 'catalog-head';
+      head.append(
+        span('catalog-name', entry.packageName),
+        span('mono muted', entry.version),
+      );
+      if (entry.added) {
+        head.append(span('badge', 'added'));
+      } else if (entry.installed) {
+        head.append(span('badge', 'installed'));
+      }
+      button.append(head, span('catalog-text', entry.description || 'No description'));
+      button.addEventListener('click', () => {
+        ui.installerPackage.value = entry.packageName;
+        ui.installerName.value = entry.name;
+        installer.nameTouched = false;
+        renderCatalog();
+        ui.installerRank.focus();
+      });
+
+      li.append(button);
+
+      return li;
+    }),
+  );
+}
+
+/** The name follows the package until you type one of your own. */
+function suggestName(packageName) {
+  return packageName
+    .trim()
+    .replace(/^@[^/]+\//, '')
+    .replace(/^busybar-/, '');
+}
+
+ui.addApp.addEventListener('click', openInstaller);
+ui.installerClose.addEventListener('click', closeInstaller);
+ui.installer.addEventListener('click', (event) => {
+  if (event.target === ui.installer) {
+    closeInstaller();
+  }
+});
+ui.installer.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeInstaller();
+  }
+});
+ui.installerSearch.addEventListener('input', renderCatalog);
+ui.installerPackage.addEventListener('input', () => {
+  if (!installer.nameTouched) {
+    ui.installerName.value = suggestName(ui.installerPackage.value);
+  }
+  renderCatalog();
+});
+ui.installerName.addEventListener('input', () => {
+  installer.nameTouched = ui.installerName.value.trim() !== '';
+});
+
+ui.installerForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (installer.busy) {
+    return;
+  }
+  installer.busy = true;
+  setInstalling(true);
+  ui.installerLog.hidden = false;
+  ui.installerLog.textContent = '';
+
+  try {
+    const job = await api('POST', '/install', {
+      packageName: ui.installerPackage.value.trim(),
+      name: ui.installerName.value.trim(),
+      rank: ui.installerRank.value,
+    });
+    await follow(job.id);
+  } catch (error) {
+    ui.installerLog.textContent = error.message;
+    flash(error.message, true);
+  } finally {
+    installer.busy = false;
+    setInstalling(false);
+  }
+});
+
+function setInstalling(on) {
+  for (const control of ui.installerForm.elements) {
+    control.disabled = on;
+  }
+  ui.installerGo.textContent = on ? 'Installing…' : 'Install';
+}
+
+/** Watches an install to the end, with npm's own words as it goes. */
+async function follow(id) {
+  for (;;) {
+    const job = await api('GET', `/install/${encodeURIComponent(id)}`);
+    ui.installerLog.textContent = job.log.slice(-60).join('\n');
+    ui.installerLog.scrollTop = ui.installerLog.scrollHeight;
+
+    if (job.state === 'running') {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      continue;
+    }
+
+    flash(job.message, job.state === 'failed');
+    if (job.state === 'done') {
+      installer.loaded = false;
+      closeInstaller();
+      await poll();
+      if (job.name && state.apps.some((app) => app.name === job.name)) {
+        await select(job.name);
+      }
+    }
+
+    return;
+  }
 }
 
 // --- boot -------------------------------------------------------------------------
