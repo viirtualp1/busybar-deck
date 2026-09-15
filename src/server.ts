@@ -141,6 +141,8 @@ const CONFIG = new RegExp(`^${API}/apps/([^/]+)/config$`);
 const RESTART = new RegExp(`^${API}/apps/([^/]+)/restart$`);
 const PIN = new RegExp(`^${API}/pin/([^/]+)$`);
 const INSTALL_JOB = new RegExp(`^${API}/install/([^/]+)$`);
+const STOP = new RegExp(`^${API}/apps/([^/]+)/stop$`);
+const APP = new RegExp(`^${API}/apps/([^/]+)$`);
 
 async function route(
   request: IncomingMessage,
@@ -224,6 +226,37 @@ async function route(
   if (path === `${API}/pin` && method === 'DELETE') {
     deck.unpin();
     send(response, 200, { pinned: null });
+
+    return;
+  }
+
+  const stop = STOP.exec(path);
+  if (stop && method === 'POST') {
+    await deck.refresh();
+    await deck.stop(decodeURIComponent(stop[1] ?? ''));
+    send(response, 200, { stopped: true });
+
+    return;
+  }
+
+  const app = APP.exec(path);
+  if (app && method === 'DELETE') {
+    await deck.refresh();
+    send(
+      response,
+      200,
+      await deck.remove(decodeURIComponent(app[1] ?? ''), {
+        uninstall: url.searchParams.get('uninstall') === '1',
+      }),
+    );
+
+    return;
+  }
+
+  if (path === `${API}/order` && method === 'PUT') {
+    await deck.refresh();
+    const payload = await body<{ order?: unknown } | null>(request);
+    send(response, 200, { ranks: deck.reorder(payload?.order) });
 
     return;
   }

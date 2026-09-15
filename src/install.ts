@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DeckError } from './live.js';
+import { addToManifest, isRecord, readJson } from './manifest-file.js';
 
 /** Runs npm in a directory, line by line. Injected by the tests. */
 export type NpmRunner = (
@@ -25,7 +26,7 @@ export type CatalogEntry = {
   added: boolean;
 };
 
-export type InstallRequest = { packageName?: unknown; name?: unknown; rank?: unknown };
+export type InstallRequest = { packageName?: unknown; name?: unknown };
 
 export type InstallJob = {
   id: string;
@@ -51,16 +52,20 @@ export type InstallerOptions = {
  * Validated before it gets anywhere near a shell: npm's own rules for a name,
  * with nothing that could end one command and begin another.
  */
-const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+export const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const APP_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
 
 /** The deck's own family: installed alongside the apps, but not apps. */
-const TOOLS = new Set(['busybar-wm', 'busybar-deck', 'busybar-config', 'busybar-kit']);
+export const TOOLS = new Set([
+  'busybar-wm',
+  'busybar-deck',
+  'busybar-config',
+  'busybar-kit',
+]);
 
 const REGISTRY = 'https://registry.npmjs.org';
 const CATALOG_MS = 10 * 60 * 1000;
 const LOG_LINES = 300;
-const DEFAULT_RANK = 30;
 
 /**
  * Puts an app into the profile: installs the package, writes it into the
@@ -80,6 +85,11 @@ export class Installer {
   } | null = null;
 
   constructor(private readonly options: InstallerOptions) {}
+
+  /** npm is already at work in the profile; a second run would trip over it. */
+  get busy(): boolean {
+    return this.active !== null;
+  }
 
   async catalog(): Promise<CatalogEntry[]> {
     if (!this.catalogCache || Date.now() - this.catalogCache.at > CATALOG_MS) {
@@ -107,13 +117,6 @@ export class Installer {
         'a name is letters, digits, dots, dashes and underscores',
       );
     }
-    const rank =
-      request.rank === undefined || request.rank === ''
-        ? DEFAULT_RANK
-        : Number(request.rank);
-    if (!Number.isInteger(rank) || rank < 0 || rank > 1000) {
-      throw new DeckError('invalid', 'priority is a whole number from 0 to 1000');
-    }
     if (this.active) {
       throw new DeckError('invalid', `still installing ${this.active.packageName}`);
     }
@@ -129,7 +132,7 @@ export class Installer {
     };
     this.jobs.set(job.id, job);
     this.active = job;
-    void this.run(job, name, rank).finally(() => {
+    void this.run(job, name).finally(() => {
       this.active = null;
     });
 
@@ -145,7 +148,7 @@ export class Installer {
     return job;
   }
 
-  private async run(job: InstallJob, wanted: string, rank: number): Promise<void> {
+  private async run(job: InstallJob, wanted: string): Promise<void> {
     const dir = this.options.profileDir;
     const say = (line: string) => {
       job.log.push(line);
@@ -184,10 +187,10 @@ export class Installer {
       }
       job.name = name;
 
-      const added = addToManifest(dir, name, rank);
+      const added = addToManifest(dir, name);
       say(
         added
-          ? `wm.config.json: added ${name} at priority ${rank}`
+          ? `wm.config.json: added ${name} at the bottom — drag it up to put it first`
           : `wm.config.json: ${name} was already there`,
       );
       mkdirSync(join(dir, name), { recursive: true });
@@ -305,7 +308,7 @@ export const runNpm: NpmRunner = (args, cwd, onLine) =>
       } else {
         reject(
           new Error(
-            `npm install failed (exit code ${code ?? '?'}) — the log above says why`,
+            `npm ${args[0] ?? ''} failed (exit code ${code ?? '?'}) — the log above says why`,
           ),
         );
       }
@@ -331,39 +334,6 @@ function specName(
   const spec = readJson(join(dir, 'node_modules', ...packageName.split('/'), file));
 
   return isRecord(spec) && typeof spec['name'] === 'string' ? spec['name'] : '';
-}
-
-/** False when the app was already listed. Everything else in the file is left as it was. */
-function addToManifest(dir: string, name: string, rank: number): boolean {
-  const existing = ['wm.config.json', 'wm.json']
-    .map((file) => join(dir, file))
-    .find((path) => existsSync(path));
-  const path = existing ?? join(dir, 'wm.config.json');
-  const raw = existing ? readJson(path) : { apps: [] };
-  if (!isRecord(raw) || !Array.isArray(raw['apps'])) {
-    throw new Error(`${path} is not a manifest this can add to`);
-  }
-
-  const apps = raw['apps'] as unknown[];
-  if (apps.some((app) => isRecord(app) && app['name'] === name)) {
-    return false;
-  }
-  apps.push({ name, rank });
-  writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`);
-
-  return true;
-}
-
-function readJson(path: string): unknown {
-  try {
-    return JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    return undefined;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function message(error: unknown): string {

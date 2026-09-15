@@ -40,7 +40,10 @@
         </section>
 
         <nav class="apps" aria-label="Apps">
-          <h2 class="rail-head">Apps</h2>
+          <div class="rail-top">
+            <h2 class="rail-head">Apps</h2>
+            <span class="rail-hint">Drag to set priority · top wins</span>
+          </div>
           <ul id="app-list" class="app-list"></ul>
           <button id="add-app" class="add-app" type="button">+ Add app</button>
         </nav>
@@ -67,9 +70,20 @@
             <div class="app-actions">
               <button id="pin" class="ghost">Put on screen</button>
               <button id="restart" class="ghost">Restart</button>
+              <button id="stop" class="danger" hidden>Stop</button>
             </div>
           </header>
           <div id="sections"></div>
+          <section id="remove-zone" class="remove-zone" hidden>
+            <div>
+              <h2>Remove from this profile</h2>
+              <p class="muted small">
+                Stops the app and takes it out of wm.config.json. Its settings folder
+                stays, so adding it back picks up where you left off.
+              </p>
+            </div>
+            <button id="remove" class="danger-ghost" type="button">Remove…</button>
+          </section>
         </article>
       </section>
     </main>
@@ -135,13 +149,35 @@
               spellcheck="false"
             />
           </label>
-          <label>
-            <span>Priority</span>
-            <input id="installer-rank" type="number" value="30" min="0" max="1000" />
-          </label>
           <button id="installer-go" class="primary" type="submit">Install</button>
         </form>
         <pre id="installer-log" class="installer-log" hidden></pre>
+      </div>
+    </div>
+
+    <div id="remover" class="palette" hidden>
+      <div
+        class="dialog-box confirm-box"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="remover-title"
+        aria-describedby="remover-text"
+      >
+        <header class="dialog-head">
+          <h2 id="remover-title">Remove app</h2>
+        </header>
+        <div class="confirm-body">
+          <p id="remover-text"></p>
+          <label id="remover-uninstall-row" class="check">
+            <input id="remover-uninstall" type="checkbox" checked />
+            <span id="remover-uninstall-text">Also uninstall the package</span>
+          </label>
+          <p id="remover-note" class="muted small"></p>
+        </div>
+        <footer class="confirm-actions">
+          <button id="remover-cancel" class="ghost" type="button">Cancel</button>
+          <button id="remover-go" class="danger solid" type="button">Remove</button>
+        </footer>
       </div>
     </div>
 

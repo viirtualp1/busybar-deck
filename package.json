@@ -1,6 +1,6 @@
 {
   "name": "busybar-deck",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A control deck for the BUSY Bar: what is on screen, which app owns it, and every app's settings — in a browser",
   "author": "viirtualp1",
   "license": "MIT",

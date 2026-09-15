@@ -28,6 +28,17 @@ const ui = {
   paletteList: el('palette-list'),
   toast: el('toast'),
   appAlert: el('app-alert'),
+  stop: el('stop'),
+  remove: el('remove'),
+  removeZone: el('remove-zone'),
+  remover: el('remover'),
+  removerText: el('remover-text'),
+  removerUninstall: el('remover-uninstall'),
+  removerUninstallRow: el('remover-uninstall-row'),
+  removerUninstallText: el('remover-uninstall-text'),
+  removerNote: el('remover-note'),
+  removerCancel: el('remover-cancel'),
+  removerGo: el('remover-go'),
   addApp: el('add-app'),
   installer: el('installer'),
   installerClose: el('installer-close'),
@@ -36,7 +47,6 @@ const ui = {
   installerForm: el('installer-form'),
   installerPackage: el('installer-package'),
   installerName: el('installer-name'),
-  installerRank: el('installer-rank'),
   installerGo: el('installer-go'),
   installerLog: el('installer-log'),
 };
@@ -143,22 +153,42 @@ function renderStatus() {
 }
 
 function renderApps() {
+  // A poll landing mid-drag would rebuild the list out from under the pointer.
+  if (drag.active) {
+    return;
+  }
   const fragment = document.createDocumentFragment();
 
   for (const app of state.apps) {
     const li = document.createElement('li');
+    li.dataset.name = app.name;
     const button = document.createElement('button');
     button.className = 'app-item';
     button.classList.toggle('running', app.running);
     button.classList.toggle('on-screen', app.onScreen);
+    button.classList.toggle('sortable', app.supervised);
     button.setAttribute('aria-current', String(app.name === state.selected));
+    if (app.supervised) {
+      button.setAttribute('aria-keyshortcuts', 'Alt+ArrowUp Alt+ArrowDown');
+      button.title = 'Drag, or Alt+↑ / Alt+↓, to move it — higher takes the screen first';
+    }
 
+    const grip = span('grip', '');
+    grip.setAttribute('aria-hidden', 'true');
     button.append(
+      grip,
       span('state', ''),
       span('name', app.name),
-      app.pinned ? span('badge', 'held') : rank(app.rank),
+      app.pinned ? span('badge', 'held') : '',
     );
-    button.addEventListener('click', () => select(app.name));
+    button.addEventListener('click', () => {
+      if (!drag.justDropped) {
+        void select(app.name);
+      }
+    });
+    if (app.supervised) {
+      sortable(li, button, app);
+    }
     li.append(button);
     fragment.append(li);
   }
@@ -166,18 +196,157 @@ function renderApps() {
   ui.appList.replaceChildren(fragment);
 }
 
-/**
- * The rank, marked as one.
- *
- * A bare number in a list of apps reads as anything — a port, a count, an
- * order. The caret is there to say which way is up: higher takes the screen.
- */
-function rank(value) {
-  const node = span('rank', String(value));
-  node.title = `Priority ${value} — higher takes the screen`;
-  node.prepend(Object.assign(document.createElement('i'), { className: 'rank-mark' }));
+// --- reordering ---------------------------------------------------------------------
 
-  return node;
+const drag = { active: false, justDropped: false };
+
+/**
+ * Press, move, let go.
+ *
+ * The row lifts only once the pointer has travelled a few pixels, so a click
+ * is still a click, and the rows it passes slide out of its way — showing
+ * where it will land before it lands. With a mouse the whole row is the
+ * handle; on a touch screen only the grip is, or a finger could no longer
+ * scroll the page by dragging along the list.
+ */
+function sortable(li, button, app) {
+  button.addEventListener('pointerdown', (down) => {
+    if (down.button !== 0 || drag.active) {
+      return;
+    }
+    if (down.pointerType !== 'mouse' && !down.target.closest('.grip')) {
+      return;
+    }
+
+    const rows = [...ui.appList.children];
+    const from = rows.indexOf(li);
+    const boxes = rows.map((row) => row.getBoundingClientRect());
+    const step = boxes.length > 1 ? boxes[1].top - boxes[0].top : boxes[from].height;
+    const reach = {
+      up: boxes[0].top - boxes[from].top,
+      down: boxes[boxes.length - 1].top - boxes[from].top,
+    };
+    let lifted = false;
+    let to = from;
+
+    const move = (event) => {
+      const dy = event.clientY - down.clientY;
+      if (!lifted) {
+        if (Math.abs(dy) < 5) {
+          return;
+        }
+        lifted = true;
+        drag.active = true;
+        button.setPointerCapture?.(down.pointerId);
+        li.classList.add('dragging');
+        ui.appList.classList.add('sorting');
+      }
+      event.preventDefault();
+
+      const y = Math.max(reach.up, Math.min(reach.down, dy));
+      li.style.transform = `translateY(${y}px)`;
+      to = Math.max(0, Math.min(rows.length - 1, from + Math.round(y / step)));
+
+      rows.forEach((row, index) => {
+        if (index === from) {
+          return;
+        }
+        const shift =
+          from < to && index > from && index <= to
+            ? -step
+            : to < from && index >= to && index < from
+              ? step
+              : 0;
+        row.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    };
+
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (!lifted) {
+        return;
+      }
+      drag.active = false;
+      // The click that follows a drop is the end of the drag, not a choice.
+      drag.justDropped = true;
+      setTimeout(() => {
+        drag.justDropped = false;
+      }, 0);
+      ui.appList.classList.remove('sorting');
+      li.classList.remove('dragging');
+
+      if (to === from) {
+        for (const row of rows) {
+          row.style.transform = '';
+        }
+
+        return;
+      }
+      void reorder(app.name, to);
+    };
+
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  });
+
+  // The same thing without a pointer.
+  button.addEventListener('keydown', (event) => {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) {
+      return;
+    }
+    event.preventDefault();
+    const at = state.apps.findIndex((candidate) => candidate.name === app.name);
+    const to = at + (event.key === 'ArrowUp' ? -1 : 1);
+    if (to >= 0 && to < state.apps.length) {
+      void reorder(app.name, to, { focus: true });
+    }
+  });
+}
+
+/**
+ * Moves an app, shows it moved, then tells the deck.
+ *
+ * The list changes first because a drop that waits on the network feels like
+ * a drop that did not take. If the deck refuses, it goes back and says why.
+ */
+async function reorder(name, to, { focus = false } = {}) {
+  const before = state.apps;
+  const next = [...before];
+  const [moved] = next.splice(
+    next.findIndex((app) => app.name === name),
+    1,
+  );
+  next.splice(to, 0, moved);
+
+  // Only apps in the manifest have a place to give. The ranks kept here match
+  // the ones the deck works out, so nothing jumps when the next poll arrives.
+  const order = next.filter((app) => app.supervised).map((app) => app.name);
+  const ranks = new Map(order.map((app, index) => [app, (order.length - index) * 10]));
+  state.apps = next.map((app) =>
+    ranks.has(app.name) ? { ...app, rank: ranks.get(app.name) } : app,
+  );
+  renderApps();
+  settle(name, focus);
+
+  try {
+    await api('PUT', '/order', { order });
+  } catch (error) {
+    state.apps = before;
+    renderApps();
+    settle(name, focus);
+    flash(error.message, true);
+  }
+}
+
+function settle(name, focus) {
+  const row = [...ui.appList.children].find((item) => item.dataset.name === name);
+  row?.classList.add('settled');
+  if (focus) {
+    row?.querySelector('button')?.focus();
+  }
 }
 
 function span(className, text) {
@@ -237,6 +406,10 @@ function renderActions() {
   // Restarting something that is not running is starting it, so it says that.
   ui.restart.textContent = app.running ? 'Restart' : 'Start';
   ui.restart.disabled = !wm || !app.supervised || app.health?.state === 'unmanaged';
+  // The one button here that turns something off, so the one that looks it.
+  ui.stop.hidden = !app.running;
+  ui.stop.disabled = !wm || !app.supervised;
+  ui.removeZone.hidden = !app.supervised && !app.installed;
   ui.appDot.hidden = !app.onScreen;
   renderAlert(app);
 }
@@ -247,6 +420,7 @@ const ALERT = {
   waiting: { tone: 'info', title: 'Not started' },
   restarting: { tone: 'bad', title: 'Crashed, restarting' },
   exited: { tone: 'bad', title: 'Stopped' },
+  stopped: { tone: 'info', title: 'Stopped' },
   broken: { tone: 'bad', title: 'Cannot start' },
   unmanaged: { tone: 'warn', title: 'Not installed' },
 };
@@ -1184,6 +1358,80 @@ function truthy(value) {
   return value === '1' || /^(true|yes|on)$/i.test(value);
 }
 
+// --- stopping and removing an app ---------------------------------------------------
+
+ui.stop.addEventListener('click', () =>
+  act(`/apps/${encodeURIComponent(state.selected)}/stop`, 'POST', 'Stopped'),
+);
+
+function openRemover() {
+  const app = current();
+  if (!app) {
+    return;
+  }
+  ui.removerText.textContent = `${app.name} will be stopped and taken out of wm.config.json.`;
+  ui.removerUninstallRow.hidden = !app.installed;
+  ui.removerUninstall.checked = app.installed;
+  ui.removerUninstallText.textContent = `Also uninstall ${app.packageName}`;
+  ui.removerNote.textContent = `Its settings in ${app.name}/ are kept, so adding it again picks them back up.`;
+  ui.removerGo.disabled = false;
+  ui.removerGo.textContent = `Remove ${app.name}`;
+  ui.remover.hidden = false;
+  // Cancel first: the destructive choice should take a deliberate move.
+  ui.removerCancel.focus();
+}
+
+function closeRemover() {
+  ui.remover.hidden = true;
+}
+
+ui.remove.addEventListener('click', openRemover);
+ui.removerCancel.addEventListener('click', closeRemover);
+ui.remover.addEventListener('click', (event) => {
+  if (event.target === ui.remover) {
+    closeRemover();
+  }
+});
+ui.remover.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeRemover();
+  }
+});
+
+ui.removerGo.addEventListener('click', async () => {
+  const app = current();
+  if (!app) {
+    return;
+  }
+  ui.removerGo.disabled = true;
+  ui.removerGo.textContent = 'Removing…';
+  const uninstall = ui.removerUninstall.checked && app.installed;
+
+  try {
+    const result = await api(
+      'DELETE',
+      `/apps/${encodeURIComponent(app.name)}${uninstall ? '?uninstall=1' : ''}`,
+    );
+    closeRemover();
+    flash(
+      result.uninstalled
+        ? `Removed ${app.name} and uninstalled ${result.uninstalled}`
+        : `Removed ${app.name}`,
+    );
+    state.selected = null;
+    state.edits.clear();
+    state.errors.clear();
+    renderSaveBar();
+    ui.appView.hidden = true;
+    ui.empty.hidden = false;
+    await poll();
+  } catch (error) {
+    flash(error.message, true);
+    ui.removerGo.disabled = false;
+    ui.removerGo.textContent = `Remove ${app.name}`;
+  }
+});
+
 // --- adding an app ------------------------------------------------------------------
 
 const installer = {
@@ -1280,7 +1528,7 @@ function renderCatalog() {
         ui.installerName.value = entry.name;
         installer.nameTouched = false;
         renderCatalog();
-        ui.installerRank.focus();
+        ui.installerGo.focus();
       });
 
       li.append(button);
@@ -1335,7 +1583,6 @@ ui.installerForm.addEventListener('submit', async (event) => {
     const job = await api('POST', '/install', {
       packageName: ui.installerPackage.value.trim(),
       name: ui.installerName.value.trim(),
-      rank: ui.installerRank.value,
     });
     await follow(job.id);
   } catch (error) {

@@ -14,11 +14,21 @@ import type { AppConfigSpec } from 'busybar-kit/config-spec';
 import { decodeScreenFrame } from 'busybar-kit/screen';
 import {
   Installer,
+  PACKAGE_NAME,
+  runNpm,
+  TOOLS,
   type CatalogEntry,
   type InstallJob,
   type InstallRequest,
   type NpmRunner,
 } from './install.js';
+import {
+  inPriorityOrder,
+  manifestPath,
+  ranksFor,
+  removeFromManifest,
+  setManifestOrder,
+} from './manifest-file.js';
 import {
   DeckError,
   detachedLive,
@@ -54,6 +64,8 @@ export type AppInfo = {
   running: boolean;
   onScreen: boolean;
   pinned: boolean;
+  /** Its package is in the profile's node_modules. */
+  installed: boolean;
   /** Why it is running or not, when the window manager can say. */
   health: AppHealth | null;
   spec: AppConfigSpec;
@@ -155,11 +167,15 @@ export class Deck {
       .map((name) => {
         const configured = this.apps.get(name);
         const entry = supervised.get(name);
+        const packageName = configured?.packageName ?? `busybar-${name}`;
 
         return {
           name,
-          packageName: configured?.packageName ?? `busybar-${name}`,
-          rank: entry?.rank ?? 10,
+          packageName,
+          installed: existsSync(this.packageJson(packageName)),
+          // Installed but not in the manifest: below everything that is, which
+          // is also where the window manager puts an app it has no entry for.
+          rank: entry?.rank ?? 0,
           configurable: Boolean(configured),
           supervised: Boolean(entry),
           running: this.safely(() => state.running(name)) ?? false,
@@ -212,6 +228,108 @@ export class Deck {
 
   installJob(id: string): InstallJob {
     return this.installer.job(id);
+  }
+
+  /** Stops an app by hand; it stays off until it is started again. */
+  async stop(name: string): Promise<void> {
+    this.known(name);
+    const stop = this.live.state.stop;
+    if (!stop) {
+      throw new DeckError(
+        'unavailable',
+        'the window manager is not here, so there is nothing running to stop',
+      );
+    }
+    await stop(name);
+  }
+
+  /**
+   * A new order for the queue, top first — which is the whole of what priority
+   * is. The manifest is written in this order, and a running window manager is
+   * told the same thing at once.
+   *
+   * Every app in the manifest has to be named, once. A partial order says
+   * nothing about where the rest belong, and a name the manifest does not have
+   * is a stale page, not a request.
+   */
+  reorder(order: unknown): Record<string, number> {
+    const names = this.manifestApps().map((app) => app.name);
+    const valid =
+      Array.isArray(order) &&
+      order.length === names.length &&
+      new Set(order).size === order.length &&
+      names.every((name) => order.includes(name));
+    if (!valid) {
+      throw new DeckError(
+        'invalid',
+        `the order has to name every app in the manifest once: ${names.join(', ')}`,
+      );
+    }
+
+    const ranks = ranksFor(order as string[]);
+    setManifestOrder(this.options.profileDir, order as string[]);
+    this.manifestAt = 0;
+    this.options.live?.state.setRanks?.(ranks);
+
+    return ranks;
+  }
+
+  /**
+   * Takes an app out of the profile: out of the manifest, off the window
+   * manager, and — if asked — out of node_modules.
+   *
+   * Its folder is left alone. That is where its `.env` lives, with keys that
+   * took effort to get, and adding the app back should find them waiting.
+   */
+  async remove(
+    name: string,
+    options: { uninstall?: boolean } = {},
+  ): Promise<{ removed: boolean; uninstalled: string | null; kept: string }> {
+    this.known(name);
+    if (options.uninstall && this.installer.busy) {
+      throw new DeckError('invalid', 'an install is still running — try once it is done');
+    }
+    const packageName = this.apps.get(name)?.packageName ?? `busybar-${name}`;
+
+    const removed = removeFromManifest(this.options.profileDir, name);
+    this.manifestAt = 0;
+    await this.options.live?.state.removeApp?.(name);
+
+    let uninstalled: string | null = null;
+    const uninstallable =
+      options.uninstall &&
+      PACKAGE_NAME.test(packageName) &&
+      !TOOLS.has(packageName) &&
+      existsSync(this.packageJson(packageName));
+    if (uninstallable) {
+      const log: string[] = [];
+      try {
+        await (this.options.runNpm ?? runNpm)(
+          ['uninstall', '--no-audit', '--no-fund', packageName],
+          this.options.profileDir,
+          (line) => log.push(line),
+        );
+      } catch (error) {
+        throw new DeckError(
+          'unavailable',
+          `${name} is out of the manifest, but ${packageName} is still installed: ${log.at(-1) ?? (error instanceof Error ? error.message : String(error))}`,
+        );
+      }
+      uninstalled = packageName;
+    }
+
+    await this.refresh(true);
+
+    return { removed, uninstalled, kept: join(this.options.profileDir, name) };
+  }
+
+  private packageJson(packageName: string): string {
+    return join(
+      this.options.profileDir,
+      'node_modules',
+      ...packageName.split('/'),
+      'package.json',
+    );
   }
 
   /** What the device is showing, straight from the device. */
@@ -272,7 +390,7 @@ export class Deck {
     }
   }
 
-  /** Re-read when the file changes, so a rank edit does not need a restart. */
+  /** Re-read when the file changes, so an edit by hand does not need a restart. */
   private manifestApps(): ManifestApp[] {
     const given = this.options.manifestApps;
     if (given) {
@@ -293,17 +411,13 @@ export class Deck {
   }
 }
 
-function manifestPath(profileDir: string): string | undefined {
-  return ['wm.config.json', 'wm.json']
-    .map((file) => join(profileDir, file))
-    .find((path) => existsSync(path));
-}
-
 function readManifest(path: string): ManifestApp[] {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf8')) as { apps?: ManifestApp[] };
+    const apps = Array.isArray(raw.apps) ? inPriorityOrder(raw.apps) : [];
 
-    return Array.isArray(raw.apps) ? raw.apps : [];
+    // Ranked the way the window manager ranks them: by place in the list.
+    return apps.map((app, index) => ({ ...app, rank: (apps.length - index) * 10 }));
   } catch {
     return [];
   }
@@ -311,8 +425,9 @@ function readManifest(path: string): ManifestApp[] {
 
 /**
  * The order the window manager would pick them in, so the list reads as the
- * queue for the screen rather than as an alphabet. Ties fall to the name, so
- * two apps of equal rank do not swap places between refreshes.
+ * queue for the screen rather than as an alphabet. Only apps outside the
+ * manifest can tie; those fall to the name, so they do not swap places between
+ * refreshes.
  */
 function byPriority(left: AppInfo, right: AppInfo): number {
   return right.rank - left.rank || left.name.localeCompare(right.name);

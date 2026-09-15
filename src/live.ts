@@ -20,7 +20,8 @@ export type ScreenFrame = { body: string; contentType: string };
  * other for a type.
  */
 export type AppHealth = {
-  state: 'running' | 'waiting' | 'restarting' | 'exited' | 'broken' | 'unmanaged';
+  state:
+    'running' | 'waiting' | 'restarting' | 'exited' | 'stopped' | 'broken' | 'unmanaged';
   message: string;
   since?: number;
   restartAt?: number;
@@ -56,6 +57,12 @@ export type LiveState = {
    * an installed app waits for the window manager's next start.
    */
   addApp?: (name: string) => Promise<void> | void;
+  /** Stops an app by hand; it stays off until started again. */
+  stop?: (name: string) => Promise<void> | void;
+  /** Stops and forgets an app just taken out of the manifest. */
+  removeApp?: (name: string) => Promise<void> | void;
+  /** New ranks, applied to the running queue as well as the file. */
+  setRanks?: (ranks: Record<string, number>) => void;
 };
 
 export type LiveStatus = { connected: true } | { connected: false; reason: string };

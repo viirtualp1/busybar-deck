@@ -47,10 +47,7 @@ function profile(): string {
   writeFileSync(
     join(dir, 'wm.config.json'),
     JSON.stringify({
-      apps: [
-        { name: 'demo', rank: 42 },
-        { name: 'ghost', rank: 5 },
-      ],
+      apps: [{ name: 'demo' }, { name: 'ghost' }],
     }),
   );
 
@@ -112,7 +109,7 @@ test('an installed package that describes itself is listed with its spec', async
   const demo = apps.find((app) => app.name === 'demo');
   assert.equal(demo?.configurable, true);
   assert.equal(demo?.supervised, true);
-  assert.equal(demo?.rank, 42, 'the rank comes from the manifest');
+  assert.equal(demo?.rank, 20, 'first of two in the manifest, so the higher');
   assert.equal(demo?.spec.summary, 'a demo app');
   assert.equal(demo?.running, true);
   assert.equal(demo?.onScreen, true);
@@ -386,30 +383,55 @@ test('apps come back in the order the screen would give them, not alphabetical',
   const deck = new Deck({ profileDir: scratch(), live: liveStub() });
   await deck.refresh();
 
-  // demo is rank 42 and ghost is rank 5, so alphabetical order would put the
-  // lower-ranked one first. The list is the queue for the screen.
+  // demo is listed before ghost, which alphabetical order would reverse. The
+  // list is the queue for the screen.
   assert.deepEqual(
     deck.listApps().map((app) => app.name),
     ['demo', 'ghost'],
   );
 });
 
-test('equal ranks fall back to the name, so the list does not shuffle', async () => {
-  const deck = new Deck({
-    profileDir: scratch(),
-    live: liveStub(),
-    manifestApps: [
-      { name: 'zulu', rank: 10 },
-      { name: 'alpha', rank: 10 },
-      { name: 'demo', rank: 90 },
-    ],
-  });
+test('a manifest still written with numbers is listed in the order they give', async () => {
+  const dir = scratch();
+  writeFileSync(
+    join(dir, 'wm.config.json'),
+    JSON.stringify({
+      apps: [
+        { name: 'ghost', rank: 5 },
+        { name: 'demo', rank: 42 },
+      ],
+    }),
+  );
+  const deck = new Deck({ profileDir: dir, live: liveStub() });
   await deck.refresh();
 
   assert.deepEqual(
     deck.listApps().map((app) => app.name),
-    ['demo', 'alpha', 'zulu'],
+    ['demo', 'ghost'],
   );
+});
+
+test('the first change writes an old manifest back as a plain order', async () => {
+  const dir = scratch();
+  writeFileSync(
+    join(dir, 'wm.config.json'),
+    JSON.stringify({
+      apps: [
+        { name: 'ghost', rank: 5, autostart: false },
+        { name: 'demo', rank: 42 },
+      ],
+      note: 'kept',
+    }),
+  );
+  const deck = new Deck({ profileDir: dir, live: liveStub() });
+  await deck.refresh();
+
+  deck.reorder(['demo', 'ghost']);
+
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'wm.config.json'), 'utf8')), {
+    apps: [{ name: 'demo' }, { name: 'ghost', autostart: false }],
+    note: 'kept',
+  });
 });
 
 // --- why an app is down, and adding one -------------------------------------------
@@ -486,10 +508,7 @@ test('installing an app writes it into the manifest and hands it to the window m
   );
   const deck = new Deck({ profileDir: dir, live, runNpm: npm.runNpm });
 
-  const job = await finished(
-    deck,
-    deck.install({ packageName: 'busybar-fresh', rank: 55 }).id,
-  );
+  const job = await finished(deck, deck.install({ packageName: 'busybar-fresh' }).id);
 
   assert.equal(job.state, 'done', job.message);
   assert.equal(job.name, 'freshly', 'named after what it draws as, from its spec');
@@ -498,9 +517,13 @@ test('installing an app writes it into the manifest and hands it to the window m
     'nothing in the package gets to run',
   );
   const manifest = JSON.parse(readFileSync(join(dir, 'wm.config.json'), 'utf8')) as {
-    apps: { name: string; rank: number }[];
+    apps: { name: string }[];
   };
-  assert.deepEqual(manifest.apps.at(-1), { name: 'freshly', rank: 55 });
+  assert.deepEqual(
+    manifest.apps.at(-1),
+    { name: 'freshly' },
+    'at the bottom, unnumbered',
+  );
   assert.ok(existsSync(join(dir, 'freshly')), 'with a folder for its .env');
   assert.deepEqual(added, ['freshly']);
   assert.ok(deck.listApps().some((app) => app.name === 'freshly'));
@@ -573,6 +596,151 @@ test('the catalog lists apps from npm, not the libraries tagged the same way', a
   const before = asked;
   await deck.catalog();
   assert.equal(asked, before, 'npm is not asked again every time the dialog opens');
+});
+
+// --- stopping, reordering, removing ---------------------------------------------------
+
+test('a new order rewrites the file and the running queue', async () => {
+  const dir = scratch();
+  const live = liveStub();
+  const applied: Record<string, number>[] = [];
+  live.state.setRanks = (ranks) => {
+    applied.push(ranks);
+  };
+  const deck = new Deck({ profileDir: dir, live });
+  await deck.refresh();
+
+  const ranks = deck.reorder(['ghost', 'demo']);
+
+  assert.deepEqual(ranks, { ghost: 20, demo: 10 });
+  assert.deepEqual(applied, [ranks], 'the running queue changes too, not only the file');
+  const manifest = JSON.parse(readFileSync(join(dir, 'wm.config.json'), 'utf8')) as {
+    apps: { name: string }[];
+  };
+  assert.deepEqual(
+    manifest.apps,
+    [{ name: 'ghost' }, { name: 'demo' }],
+    'just the order',
+  );
+  assert.deepEqual(
+    deck.listApps().map((app) => app.name),
+    ['ghost', 'demo'],
+    'and the list follows at once',
+  );
+});
+
+test('an order that is not the whole manifest, once each, is refused unwritten', async () => {
+  const dir = scratch();
+  const deck = new Deck({ profileDir: dir, live: liveStub() });
+  await deck.refresh();
+  const before = readFileSync(join(dir, 'wm.config.json'), 'utf8');
+
+  for (const order of [['demo'], ['demo', 'demo'], ['demo', 'ghost', 'nope'], 'demo']) {
+    assert.throws(
+      () => deck.reorder(order),
+      (error: unknown) => error instanceof DeckError && error.kind === 'invalid',
+      JSON.stringify(order),
+    );
+  }
+  assert.equal(readFileSync(join(dir, 'wm.config.json'), 'utf8'), before);
+});
+
+test('removing an app takes it out and uninstalls it, but keeps its settings', async () => {
+  const dir = scratch();
+  mkdirSync(join(dir, 'demo'), { recursive: true });
+  writeFileSync(join(dir, 'demo', '.env'), 'NAME=kept\n');
+  const removed: string[] = [];
+  const live = liveStub();
+  live.state.removeApp = (name) => {
+    removed.push(name);
+  };
+  const calls: string[][] = [];
+  const deck = new Deck({
+    profileDir: dir,
+    live,
+    runNpm: (args) => {
+      calls.push(args);
+      rmSync(join(dir, 'node_modules', 'busybar-demo'), { recursive: true, force: true });
+
+      return Promise.resolve();
+    },
+  });
+  await deck.refresh();
+  assert.equal(deck.listApps().find((app) => app.name === 'demo')?.installed, true);
+
+  const result = await deck.remove('demo', { uninstall: true });
+
+  assert.equal(result.removed, true);
+  assert.equal(result.uninstalled, 'busybar-demo');
+  assert.equal(calls[0]?.[0], 'uninstall');
+  assert.ok(calls[0]?.includes('busybar-demo'));
+  assert.deepEqual(removed, ['demo'], 'the window manager lets go of it');
+  assert.doesNotMatch(readFileSync(join(dir, 'wm.config.json'), 'utf8'), /"demo"/);
+  assert.ok(existsSync(join(dir, 'demo', '.env')), 'its settings stay');
+  assert.equal(
+    deck.listApps().some((app) => app.name === 'demo'),
+    false,
+  );
+});
+
+test('removing without uninstalling leaves the package where it is', async () => {
+  const dir = scratch();
+  const calls: string[][] = [];
+  const deck = new Deck({
+    profileDir: dir,
+    live: liveStub(),
+    runNpm: (args) => {
+      calls.push(args);
+
+      return Promise.resolve();
+    },
+  });
+  await deck.refresh();
+
+  const result = await deck.remove('ghost');
+
+  assert.equal(result.removed, true);
+  assert.equal(result.uninstalled, null);
+  assert.equal(calls.length, 0);
+});
+
+test('stopping goes through to the window manager, and needs one', async () => {
+  const detached = new Deck({ profileDir: scratch() });
+  await detached.refresh();
+  await assert.rejects(
+    () => detached.stop('demo'),
+    (error: unknown) => error instanceof DeckError && error.kind === 'unavailable',
+  );
+
+  const live = liveStub();
+  const stopped: string[] = [];
+  live.state.stop = (name) => {
+    stopped.push(name);
+  };
+  const deck = new Deck({ profileDir: scratch(), live });
+  await deck.refresh();
+
+  await deck.stop('demo');
+  assert.deepEqual(stopped, ['demo']);
+});
+
+test('the order goes over HTTP as a PUT of names', async () => {
+  const { base, close, deck } = await serve();
+  try {
+    const response = await fetch(`${base}/api/order`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ order: ['ghost', 'demo'] }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      deck.listApps().map((app) => app.name),
+      ['ghost', 'demo'],
+    );
+  } finally {
+    await close();
+  }
 });
 
 test('the deck serves a frame of the panel, straight from the device', async () => {
